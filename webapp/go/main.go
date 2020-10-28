@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
-	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -20,8 +19,8 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/jmoiron/sqlx"
 	"github.com/labstack/echo/v4"
-	"github.com/labstack/echo/v4/middleware"
 	"go.opencensus.io/plugin/ochttp"
+	"golang.org/x/sync/singleflight"
 )
 
 const Limit = 20
@@ -32,18 +31,12 @@ var mySQLConnectionData *MySQLConnectionEnv
 var chairSearchCondition ChairSearchCondition
 var estateSearchCondition EstateSearchCondition
 
-var getLowPricedChairLock sync.RWMutex
-var getLowPricedChairCache []Chair
-var getLowPricedEstateLock sync.RWMutex
-var getLowPricedEstateCache []Estate
+var chairCache = NewSC()
+var estateCache = NewSC()
+var sfGroup singleflight.Group
 
-var searchChairLock sync.RWMutex
-var searchChairsCache map[string]ChairSearchResponse
-var searchEstateLock sync.RWMutex
-var searchEstateCache map[string]EstateSearchResponse
-
-var soldoutChairLock sync.RWMutex
-var soldoutChairIDs []string
+//var soldoutChairLock sync.RWMutex
+//var soldoutChairIDs []string
 
 type InitializeResponse struct {
 	Language string `json:"language"`
@@ -63,6 +56,10 @@ type Chair struct {
 	Kind        string `db:"kind" json:"kind"`
 	Popularity  int64  `db:"popularity" json:"-"`
 	Stock       int64  `db:"stock" json:"-"`
+	PriceRange  int64  `db:"price_range" json:"-"`
+	HeightRange int64  `db:"height_range" json:"-"`
+	WidthRange  int64  `db:"width_range" json:"-"`
+	DepthRange  int64  `db:"depth_range" json:"-"`
 }
 
 type ChairSearchResponse struct {
@@ -76,19 +73,22 @@ type ChairListResponse struct {
 
 //Estate 物件
 type Estate struct {
-	ID          int64   `db:"id" json:"id"`
-	Thumbnail   string  `db:"thumbnail" json:"thumbnail"`
-	Name        string  `db:"name" json:"name"`
-	Description string  `db:"description" json:"description"`
-	Latitude    float64 `db:"latitude" json:"latitude"`
-	Longitude   float64 `db:"longitude" json:"longitude"`
-	Address     string  `db:"address" json:"address"`
-	Rent        int64   `db:"rent" json:"rent"`
-	DoorHeight  int64   `db:"door_height" json:"doorHeight"`
-	DoorWidth   int64   `db:"door_width" json:"doorWidth"`
-	Features    string  `db:"features" json:"features"`
-	Popularity  int64   `db:"popularity" json:"-"`
-	Point       []byte  `db:"point" json:"-"`
+	ID              int64   `db:"id" json:"id"`
+	Thumbnail       string  `db:"thumbnail" json:"thumbnail"`
+	Name            string  `db:"name" json:"name"`
+	Description     string  `db:"description" json:"description"`
+	Latitude        float64 `db:"latitude" json:"latitude"`
+	Longitude       float64 `db:"longitude" json:"longitude"`
+	Address         string  `db:"address" json:"address"`
+	Rent            int64   `db:"rent" json:"rent"`
+	DoorHeight      int64   `db:"door_height" json:"doorHeight"`
+	DoorWidth       int64   `db:"door_width" json:"doorWidth"`
+	Features        string  `db:"features" json:"features"`
+	Popularity      int64   `db:"popularity" json:"-"`
+	Point           []byte  `db:"point" json:"-"`
+	DoorHeightRange int64   `db:"door_height_range" json:"-"`
+	DoorWidthRange  int64   `db:"door_width_range" json:"-"`
+	RentRange       int64   `db:"rent_range" json:"-"`
 }
 
 //EstateSearchResponse estate/searchへのレスポンスの形式
@@ -237,7 +237,7 @@ func getEnv(key, defaultValue string) string {
 //ConnectDB isuumoデータベースに接続する
 func (mc *MySQLConnectionEnv) ConnectDB() (*sqlx.DB, error) {
 	dsn := fmt.Sprintf("%v:%v@tcp(%v:%v)/%v?interpolateParams=true", mc.User, mc.Password, mc.Host, mc.Port, mc.DBName)
-	return sqlx.Open("mysql", dsn)
+	return sqlx.Open(tracedDriver("mysql"), dsn)
 }
 
 func init() {
@@ -302,21 +302,8 @@ func main() {
 	initProfiler()
 	initTrace()
 
-	getLowPricedChairLock.Lock()
-	getLowPricedChairCache = nil
-	getLowPricedChairLock.Unlock()
-
-	getLowPricedEstateLock.Lock()
-	getLowPricedEstateCache = nil
-	getLowPricedEstateLock.Unlock()
-
-	searchChairLock.Lock()
-	searchChairsCache = make(map[string]ChairSearchResponse)
-	searchChairLock.Unlock()
-
-	searchEstateLock.Lock()
-	searchEstateCache = make(map[string]EstateSearchResponse)
-	searchEstateLock.Unlock()
+	chairCache.Flush()
+	estateCache.Flush()
 
 	// Echo instance
 	e := echo.New()
@@ -325,8 +312,8 @@ func main() {
 
 	// Middleware
 	// e.Use(middleware.Logger())
-	e.Use(WithTrace)
-	e.Use(middleware.Recover())
+	//e.Use(WithTrace)
+	//e.Use(middleware.Recover())
 	e.Use(Banbot)
 
 	// Initialize
@@ -358,10 +345,10 @@ func main() {
 		e.Logger.Fatalf("DB connection failed : %v", err)
 	}
 	db.SetMaxOpenConns(30)
-	db.SetMaxOpenConns(100)
+	db.SetMaxIdleConns(30)
 	defer db.Close()
 
-	chairs := make([]Chair, 0)
+	/*chairs := make([]Chair, 0)
 	query := `SELECT * FROM chair WHERE stock = 0`
 	_ = db.Select(&chairs, query)
 	chairIDs := make([]string, 0)
@@ -371,7 +358,7 @@ func main() {
 	soldoutChairLock.Lock()
 	soldoutChairIDs = chairIDs
 	log.Printf("%v", soldoutChairIDs)
-	soldoutChairLock.Unlock()
+	soldoutChairLock.Unlock()*/
 
 	// Start server
 	serverPort := fmt.Sprintf(":%v", getEnv("SERVER_PORT", "1323"))
@@ -381,21 +368,8 @@ func main() {
 func initialize(c echo.Context) error {
 	_ = c.Request().Context()
 
-	getLowPricedChairLock.Lock()
-	getLowPricedChairCache = nil
-	getLowPricedChairLock.Unlock()
-
-	getLowPricedEstateLock.Lock()
-	getLowPricedEstateCache = nil
-	getLowPricedEstateLock.Unlock()
-
-	searchChairLock.Lock()
-	searchChairsCache = make(map[string]ChairSearchResponse)
-	searchChairLock.Unlock()
-
-	searchEstateLock.Lock()
-	searchEstateCache = make(map[string]EstateSearchResponse)
-	searchEstateLock.Unlock()
+	chairCache.Flush()
+	estateCache.Flush()
 
 	sqlDir := filepath.Join("..", "mysql", "db")
 	paths := []string{
@@ -420,7 +394,7 @@ func initialize(c echo.Context) error {
 		}
 	}
 
-	chairs := make([]Chair, 0)
+	/*chairs := make([]Chair, 0)
 	query := `SELECT * FROM chair WHERE stock = 0`
 	_ = db.Select(&chairs, query)
 	chairIDs := make([]string, 0)
@@ -430,7 +404,7 @@ func initialize(c echo.Context) error {
 	soldoutChairLock.Lock()
 	soldoutChairIDs = chairIDs
 	log.Printf("%v", soldoutChairIDs)
-	soldoutChairLock.Unlock()
+	soldoutChairLock.Unlock()*/
 
 	return c.JSON(http.StatusOK, InitializeResponse{
 		Language: "go",
@@ -528,13 +502,7 @@ func postChair(c echo.Context) error {
 		return c.NoContent(http.StatusInternalServerError)
 	}
 
-	getLowPricedChairLock.Lock()
-	getLowPricedChairCache = nil
-	getLowPricedChairLock.Unlock()
-
-	searchChairLock.Lock()
-	searchChairsCache = make(map[string]ChairSearchResponse)
-	searchChairLock.Unlock()
+	chairCache.Flush()
 
 	return c.NoContent(http.StatusCreated)
 }
@@ -544,12 +512,9 @@ func searchChairs(c echo.Context) error {
 	params := make([]interface{}, 0)
 
 	qs := c.QueryString()
-	searchChairLock.RLock()
-	if cache, ok := searchChairsCache[qs]; ok {
-		searchChairLock.RUnlock()
-		return c.JSON(http.StatusOK, cache)
+	if r, found := chairCache.Get(qs); found {
+		return c.JSONBlob(http.StatusOK, r.([]byte))
 	}
-	searchChairLock.RUnlock()
 
 	if c.QueryParam("priceRangeId") != "" {
 		chairPrice, err := getRange(chairSearchCondition.Price, c.QueryParam("priceRangeId"))
@@ -558,14 +523,16 @@ func searchChairs(c echo.Context) error {
 			return c.NoContent(http.StatusBadRequest)
 		}
 
-		if chairPrice.Min != -1 {
+		/*if chairPrice.Min != -1 {
 			conditions = append(conditions, "price >= ?")
 			params = append(params, chairPrice.Min)
 		}
 		if chairPrice.Max != -1 {
 			conditions = append(conditions, "price < ?")
 			params = append(params, chairPrice.Max)
-		}
+		}*/
+		conditions = append(conditions, "price_range = ?")
+		params = append(params, chairPrice.ID)
 	}
 
 	if c.QueryParam("heightRangeId") != "" {
@@ -575,14 +542,16 @@ func searchChairs(c echo.Context) error {
 			return c.NoContent(http.StatusBadRequest)
 		}
 
-		if chairHeight.Min != -1 {
+		/*if chairHeight.Min != -1 {
 			conditions = append(conditions, "height >= ?")
 			params = append(params, chairHeight.Min)
 		}
 		if chairHeight.Max != -1 {
 			conditions = append(conditions, "height < ?")
 			params = append(params, chairHeight.Max)
-		}
+		}*/
+		conditions = append(conditions, "height_range = ?")
+		params = append(params, chairHeight.ID)
 	}
 
 	if c.QueryParam("widthRangeId") != "" {
@@ -592,14 +561,16 @@ func searchChairs(c echo.Context) error {
 			return c.NoContent(http.StatusBadRequest)
 		}
 
-		if chairWidth.Min != -1 {
+		/*if chairWidth.Min != -1 {
 			conditions = append(conditions, "width >= ?")
 			params = append(params, chairWidth.Min)
 		}
 		if chairWidth.Max != -1 {
 			conditions = append(conditions, "width < ?")
 			params = append(params, chairWidth.Max)
-		}
+		}*/
+		conditions = append(conditions, "width_range = ?")
+		params = append(params, chairWidth.ID)
 	}
 
 	if c.QueryParam("depthRangeId") != "" {
@@ -609,14 +580,16 @@ func searchChairs(c echo.Context) error {
 			return c.NoContent(http.StatusBadRequest)
 		}
 
-		if chairDepth.Min != -1 {
+		/*if chairDepth.Min != -1 {
 			conditions = append(conditions, "depth >= ?")
 			params = append(params, chairDepth.Min)
 		}
 		if chairDepth.Max != -1 {
 			conditions = append(conditions, "depth < ?")
 			params = append(params, chairDepth.Max)
-		}
+		}*/
+		conditions = append(conditions, "depth_range = ?")
+		params = append(params, chairDepth.ID)
 	}
 
 	if c.QueryParam("kind") != "" {
@@ -641,11 +614,15 @@ func searchChairs(c echo.Context) error {
 		return c.NoContent(http.StatusBadRequest)
 	}
 
-	soldoutChairLock.RLock()
-	if len(soldoutChairIDs) > 0 {
+	/*soldoutChairLock.RLock()
+	if len(soldoutChairIDs) > 500 {
+		//conditions = append(conditions, "id not in ("+strings.Join(soldoutChairIDs, ",")+")")
+		conditions = append(conditions, "id not in (select id from chair where stock = 0)")
+		//conditions = append(conditions, "stock > 0")
+	} else if len(soldoutChairIDs) > 0 {
 		conditions = append(conditions, "id not in ("+strings.Join(soldoutChairIDs, ",")+")")
 	}
-	soldoutChairLock.RUnlock()
+	soldoutChairLock.RUnlock()*/
 
 	page, err := strconv.Atoi(c.QueryParam("page"))
 	if err != nil {
@@ -659,8 +636,8 @@ func searchChairs(c echo.Context) error {
 		return c.NoContent(http.StatusBadRequest)
 	}
 
-	searchQuery := "SELECT * FROM chair WHERE "
-	countQuery := "SELECT COUNT(*) FROM chair WHERE "
+	searchQuery := "SELECT * FROM chair_stock WHERE "
+	countQuery := "SELECT COUNT(*) FROM chair_stock WHERE "
 	searchCondition := strings.Join(conditions, " AND ")
 	limitOffset := " ORDER BY popularity DESC, id ASC LIMIT ? OFFSET ?"
 
@@ -691,13 +668,11 @@ func searchChairs(c echo.Context) error {
 		return c.NoContent(http.StatusInternalServerError)
 	}
 
-	searchChairLock.Lock()
-	defer searchChairLock.Unlock()
-	searchChairsCache[qs] = res
-
 	res.Chairs = chairs
+	b, _ := json.Marshal(res)
+	chairCache.Set(qs, b)
 
-	return c.JSON(http.StatusOK, res)
+	return c.JSONBlob(http.StatusOK, b)
 }
 
 func buyChair(c echo.Context) error {
@@ -737,9 +712,9 @@ func buyChair(c echo.Context) error {
 		return c.NoContent(http.StatusInternalServerError)
 	}
 
-	soldoutChairLock.Lock()
+	/*soldoutChairLock.Lock()
 	soldoutChairIDs = append(soldoutChairIDs, strconv.Itoa(id))
-	soldoutChairLock.Unlock()
+	soldoutChairLock.Unlock()*/
 
 	err = tx.Commit()
 	if err != nil {
@@ -747,12 +722,7 @@ func buyChair(c echo.Context) error {
 		return c.NoContent(http.StatusInternalServerError)
 	}
 
-	getLowPricedChairLock.Lock()
-	getLowPricedChairCache = nil
-	getLowPricedChairLock.Unlock()
-	searchChairLock.Lock()
-	searchChairsCache = make(map[string]ChairSearchResponse)
-	searchChairLock.Unlock()
+	chairCache.Flush()
 
 	if rowsAffected == 0 {
 		return c.NoContent(http.StatusNotFound)
@@ -766,35 +736,43 @@ func getChairSearchCondition(c echo.Context) error {
 }
 
 func getLowPricedChair(c echo.Context) error {
-	if getLowPricedChairCache != nil {
-		getLowPricedChairLock.RLock()
-		defer getLowPricedChairLock.RUnlock()
-		return c.JSON(http.StatusOK, ChairListResponse{Chairs: getLowPricedChairCache})
+	if r, found := chairCache.Get("getLowPricedChair"); found {
+		return c.JSONBlob(http.StatusOK, r.([]byte))
 	}
 
-	var chairs []Chair
-	soldoutChairLock.RLock()
-	so := ""
-	if len(soldoutChairIDs) > 0 {
-		so = "WHERE id not in (" + strings.Join(soldoutChairIDs, ",") + ")"
-	}
-	query := `SELECT * FROM chair ` + so + ` ORDER BY price ASC, id ASC LIMIT ?`
-	soldoutChairLock.RUnlock()
-	err := db.Select(&chairs, query, Limit)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			c.Logger().Error("getLowPricedChair not found")
-			return c.JSON(http.StatusOK, ChairListResponse{[]Chair{}})
+	r, e, _ := sfGroup.Do("getLowPricedChair", func() (interface{}, error) {
+		var chairs []Chair
+		so := ""
+		/*
+			soldoutChairLock.RLock()
+
+			if len(soldoutChairIDs) > 0 {
+				//so = "WHERE id not in (" + strings.Join(soldoutChairIDs, ",") + ")"
+				//so = "where id not in (select id from chair where stock = 0)"
+				//so = "where stock > 0"
+			}
+			soldoutChairLock.RUnlock()*/
+
+		query := `SELECT * FROM chair_stock ` + so + ` ORDER BY price ASC, id ASC LIMIT ?`
+		err := db.Select(&chairs, query, Limit)
+		if err != nil {
+			if err == sql.ErrNoRows {
+				c.Logger().Error("getLowPricedChair not found")
+				//return nil, c.JSON(http.StatusOK, ChairListResponse{[]Chair{}})
+				return []byte("[]"), nil
+			}
+			c.Logger().Errorf("getLowPricedChair DB execution error : %v", err)
+			return nil, err
 		}
-		c.Logger().Errorf("getLowPricedChair DB execution error : %v", err)
+		b, _ := json.Marshal(ChairListResponse{Chairs: chairs})
+		chairCache.Set("getLowPricedChair", b)
+
+		return b, nil
+	})
+	if e != nil {
 		return c.NoContent(http.StatusInternalServerError)
 	}
-
-	getLowPricedChairLock.Lock()
-	getLowPricedChairCache = chairs
-	getLowPricedChairLock.Unlock()
-
-	return c.JSON(http.StatusOK, ChairListResponse{Chairs: chairs})
+	return c.JSONBlob(http.StatusOK, r.([]byte))
 }
 
 func getEstateDetail(c echo.Context) error {
@@ -893,13 +871,7 @@ func postEstate(c echo.Context) error {
 		return c.NoContent(http.StatusInternalServerError)
 	}
 
-	getLowPricedEstateLock.Lock()
-	getLowPricedEstateCache = nil
-	getLowPricedEstateLock.Unlock()
-
-	searchEstateLock.Lock()
-	searchEstateCache = make(map[string]EstateSearchResponse)
-	searchEstateLock.Unlock()
+	estateCache.Flush()
 
 	return c.NoContent(http.StatusCreated)
 }
@@ -909,12 +881,9 @@ func searchEstates(c echo.Context) error {
 	params := make([]interface{}, 0)
 
 	qs := c.QueryString()
-	searchEstateLock.RLock()
-	if cache, ok := searchEstateCache[qs]; ok {
-		searchEstateLock.RUnlock()
-		return c.JSON(http.StatusOK, cache)
+	if r, found := estateCache.Get(qs); found {
+		return c.JSONBlob(http.StatusOK, r.([]byte))
 	}
-	searchEstateLock.RUnlock()
 
 	if c.QueryParam("doorHeightRangeId") != "" {
 		doorHeight, err := getRange(estateSearchCondition.DoorHeight, c.QueryParam("doorHeightRangeId"))
@@ -922,15 +891,17 @@ func searchEstates(c echo.Context) error {
 			c.Echo().Logger.Infof("doorHeightRangeID invalid, %v : %v", c.QueryParam("doorHeightRangeId"), err)
 			return c.NoContent(http.StatusBadRequest)
 		}
-
-		if doorHeight.Min != -1 {
-			conditions = append(conditions, "door_height >= ?")
-			params = append(params, doorHeight.Min)
-		}
-		if doorHeight.Max != -1 {
-			conditions = append(conditions, "door_height < ?")
-			params = append(params, doorHeight.Max)
-		}
+		/*
+			if doorHeight.Min != -1 {
+				conditions = append(conditions, "door_height >= ?")
+				params = append(params, doorHeight.Min)
+			}
+			if doorHeight.Max != -1 {
+				conditions = append(conditions, "door_height < ?")
+				params = append(params, doorHeight.Max)
+			}*/
+		conditions = append(conditions, "door_height_range = ?")
+		params = append(params, doorHeight.ID)
 	}
 
 	if c.QueryParam("doorWidthRangeId") != "" {
@@ -940,14 +911,16 @@ func searchEstates(c echo.Context) error {
 			return c.NoContent(http.StatusBadRequest)
 		}
 
-		if doorWidth.Min != -1 {
+		/*if doorWidth.Min != -1 {
 			conditions = append(conditions, "door_width >= ?")
 			params = append(params, doorWidth.Min)
 		}
 		if doorWidth.Max != -1 {
 			conditions = append(conditions, "door_width < ?")
 			params = append(params, doorWidth.Max)
-		}
+		}*/
+		conditions = append(conditions, "door_width_range = ?")
+		params = append(params, doorWidth.ID)
 	}
 
 	if c.QueryParam("rentRangeId") != "" {
@@ -957,14 +930,16 @@ func searchEstates(c echo.Context) error {
 			return c.NoContent(http.StatusBadRequest)
 		}
 
-		if estateRent.Min != -1 {
+		/*if estateRent.Min != -1 {
 			conditions = append(conditions, "rent >= ?")
 			params = append(params, estateRent.Min)
 		}
 		if estateRent.Max != -1 {
 			conditions = append(conditions, "rent < ?")
 			params = append(params, estateRent.Max)
-		}
+		}*/
+		conditions = append(conditions, "rent_range = ?")
+		params = append(params, estateRent.ID)
 	}
 
 	if c.QueryParam("features") != "" {
@@ -991,7 +966,7 @@ func searchEstates(c echo.Context) error {
 		return c.NoContent(http.StatusBadRequest)
 	}
 
-	searchQuery := "SELECT * FROM estate FORCE INDEX(idx_pop) WHERE "
+	searchQuery := "SELECT * FROM estate WHERE "
 	countQuery := "SELECT COUNT(*) FROM estate WHERE "
 	searchCondition := strings.Join(conditions, " AND ")
 	limitOffset := " ORDER BY popularity DESC, id ASC LIMIT ? OFFSET ?"
@@ -1024,37 +999,40 @@ func searchEstates(c echo.Context) error {
 	}
 
 	res.Estates = estates
+	b, _ := json.Marshal(res)
+	estateCache.Set(qs, b)
 
-	searchEstateLock.Lock()
-	defer searchEstateLock.Unlock()
-	searchEstateCache[qs] = res
-
-	return c.JSON(http.StatusOK, res)
+	return c.JSONBlob(http.StatusOK, b)
 }
 
 func getLowPricedEstate(c echo.Context) error {
-	if getLowPricedEstateCache != nil {
-		getLowPricedEstateLock.RLock()
-		defer getLowPricedEstateLock.RUnlock()
-		return c.JSON(http.StatusOK, EstateListResponse{Estates: getLowPricedEstateCache})
+	if r, found := estateCache.Get("getLowPricedEstate"); found {
+		return c.JSONBlob(http.StatusOK, r.([]byte))
 	}
-	estates := make([]Estate, 0, Limit)
-	query := `SELECT * FROM estate ORDER BY rent ASC, id ASC LIMIT ?`
-	err := db.Select(&estates, query, Limit)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			c.Logger().Error("getLowPricedEstate not found")
-			return c.JSON(http.StatusOK, EstateListResponse{[]Estate{}})
+	r, e, _ := sfGroup.Do("getLowPricedEstate", func() (interface{}, error) {
+
+		estates := make([]Estate, 0, Limit)
+		query := `SELECT * FROM estate ORDER BY rent ASC, id ASC LIMIT ?`
+		err := db.Select(&estates, query, Limit)
+		if err != nil {
+			if err != sql.ErrNoRows {
+				c.Logger().Error("getLowPricedEstate not found")
+				//return nil, c.JSON(http.StatusOK, EstateListResponse{[]Estate{}})
+				return []byte("[]"), nil
+			}
+			c.Logger().Errorf("getLowPricedEstate DB execution error : %v", err)
+			return nil, err
 		}
-		c.Logger().Errorf("getLowPricedEstate DB execution error : %v", err)
+
+		b, _ := json.Marshal(EstateListResponse{Estates: estates})
+		estateCache.Set("getLowPricedEstate", b)
+
+		return b, nil
+	})
+	if e != nil {
 		return c.NoContent(http.StatusInternalServerError)
 	}
-
-	getLowPricedEstateLock.Lock()
-	getLowPricedEstateCache = estates
-	getLowPricedEstateLock.Unlock()
-
-	return c.JSON(http.StatusOK, EstateListResponse{Estates: estates})
+	return c.JSONBlob(http.StatusOK, r.([]byte))
 }
 
 func searchRecommendedEstateWithChair(c echo.Context) error {
