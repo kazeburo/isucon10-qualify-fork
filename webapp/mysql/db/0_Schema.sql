@@ -67,15 +67,15 @@ create index idx_rent on isuumo.estate(rent asc);
 create index idx_rent_range on isuumo.estate(rent_range, popularity desc);
 create index idx_door_hei_r on isuumo.estate(door_height_range, rent_range, popularity desc);
 create index idx_door_wid_r on isuumo.estate(door_width_range, rent_range, popularity desc);
-create index idx_door_widhei_r on isuumo.estate(door_width_range, door_height_range, popularity desc);
+create index idx_door_widhei_r on isuumo.estate(door_width_range, door_height_range, rent_range, popularity desc);
 
 ALTER TABLE isuumo.estate ADD SPATIAL INDEX idx_point(point);
 
 create index idx_pop on isuumo.chair_stock(popularity desc);
 create index idx_price on isuumo.chair_stock(price asc);
 create index idx_price_range on isuumo.chair_stock(price_range, popularity desc);
-create index idx_kind on isuumo.chair_stock(kind, popularity desc);
-create index idx_color on isuumo.chair_stock(color, kind, popularity desc);
+create index idx_kind on isuumo.chair_stock(kind, price_range, popularity desc);
+create index idx_color on isuumo.chair_stock(color, price_range, popularity desc);
 create index idx_height on isuumo.chair_stock(height_range, price_range, popularity desc);
 create index idx_width on isuumo.chair_stock(width_range, price_range,popularity desc);
 create index idx_depth on isuumo.chair_stock(depth_range, price_range, popularity desc);
