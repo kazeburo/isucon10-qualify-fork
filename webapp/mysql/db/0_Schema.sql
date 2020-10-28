@@ -20,8 +20,8 @@ CREATE TABLE isuumo.estate
     popularity  INTEGER             NOT NULL,
     point       POINT AS (POINT(latitude, longitude)) STORED SRID 0 NOT NULL,
     rent_range        INTEGER AS (IF(rent < 50000, 0, IF(rent < 100000, 1, IF(rent < 150000, 2,3)))) NOT NULL,
-    door_height_range INTEGER AS (IF(door_height < 80, 0, IF(door_height < 110, 1, IF(door_height < 150, 2, 3)))) STORED NOT NULL,
-    door_width_range  INTEGER AS (IF(door_width < 80, 0, IF(door_width < 110, 1, IF(door_width < 150, 2, 3)))) STORED NOT NULL
+    door_height_range INTEGER AS (IF(door_height < 80, 0, IF(door_height < 110, 1, IF(door_height < 150, 2, 3)))) NOT NULL,
+    door_width_range  INTEGER AS (IF(door_width < 80, 0, IF(door_width < 110, 1, IF(door_width < 150, 2, 3)))) NOT NULL
 );
 
 CREATE TABLE isuumo.chair
@@ -56,33 +56,30 @@ CREATE TABLE isuumo.chair_stock
     kind        VARCHAR(64)     NOT NULL,
     popularity  INTEGER         NOT NULL,
     stock       INTEGER         NOT NULL,
-    price_range INTEGER AS (IF(price < 3000,0,IF(price < 6000, 1, IF(price < 9000, 2, IF(price < 12000, 3, IF(price < 15000, 4, 5)))))) STORED NOT NULL,
-    height_range INTEGER AS (IF(height < 80, 0, IF(height < 110, 1, IF(height < 150, 2, 3)))) STORED NOT NULL,
-    width_range INTEGER AS (IF(width < 80, 0, IF(width < 110, 1, IF(width < 150, 2, 3)))) STORED NOT NULL,
-    depth_range INTEGER AS (IF(depth < 80, 0, IF(depth < 110, 1, IF(depth < 150, 2, 3)))) STORED NOT NULL
+    price_range INTEGER AS (IF(price < 3000,0,IF(price < 6000, 1, IF(price < 9000, 2, IF(price < 12000, 3, IF(price < 15000, 4, 5))))))  NOT NULL,
+    height_range INTEGER AS (IF(height < 80, 0, IF(height < 110, 1, IF(height < 150, 2, 3))))  NOT NULL,
+    width_range INTEGER AS (IF(width < 80, 0, IF(width < 110, 1, IF(width < 150, 2, 3))))  NOT NULL,
+    depth_range INTEGER AS (IF(depth < 80, 0, IF(depth < 110, 1, IF(depth < 150, 2, 3))))  NOT NULL
 );
 
 create index idx_pop on isuumo.estate(popularity desc);
 create index idx_rent on isuumo.estate(rent asc);
 create index idx_rent_range on isuumo.estate(rent_range, popularity desc);
-create index idx_lat on isuumo.estate(latitude);
-create index idx_long on isuumo.estate(longitude);
 create index idx_door_hei_r on isuumo.estate(door_height_range, rent_range, popularity desc);
 create index idx_door_wid_r on isuumo.estate(door_width_range, rent_range, popularity desc);
-create index idx_door_widhei on isuumo.estate(door_width, door_height, popularity desc);
+create index idx_door_widhei_r on isuumo.estate(door_width_range, door_height_range, popularity desc);
 
 ALTER TABLE isuumo.estate ADD SPATIAL INDEX idx_point(point);
 
-create index idx_stock on isuumo.chair(stock);
-
 create index idx_pop on isuumo.chair_stock(popularity desc);
 create index idx_price on isuumo.chair_stock(price asc);
-create index idx_price_range on isuumo.chair_stock(price_range, depth_range, popularity desc);
+create index idx_price_range on isuumo.chair_stock(price_range, popularity desc);
 create index idx_kind on isuumo.chair_stock(kind, popularity desc);
-create index idx_color on isuumo.chair_stock(color, popularity desc);
-create index idx_height on isuumo.chair_stock(height_range, depth_range, popularity desc);
-create index idx_width on isuumo.chair_stock(width_range, depth_range, popularity desc);
-create index idx_depth on isuumo.chair_stock(depth_range, popularity desc);
+create index idx_color on isuumo.chair_stock(color, kind, popularity desc);
+create index idx_height on isuumo.chair_stock(height_range, price_range, popularity desc);
+create index idx_width on isuumo.chair_stock(width_range, price_range,popularity desc);
+create index idx_depth on isuumo.chair_stock(depth_range, price_range, popularity desc);
+create index idx_widhei on isuumo.chair_stock(width_range, height_range, popularity desc);
 
 DELIMITER $$
 CREATE

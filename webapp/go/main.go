@@ -344,8 +344,8 @@ func main() {
 	if err != nil {
 		e.Logger.Fatalf("DB connection failed : %v", err)
 	}
-	db.SetMaxOpenConns(30)
-	db.SetMaxIdleConns(30)
+	db.SetMaxOpenConns(25)
+	db.SetMaxIdleConns(25)
 	defer db.Close()
 
 	/*chairs := make([]Chair, 0)
@@ -694,14 +694,14 @@ func buyChair(c echo.Context) error {
 		return c.NoContent(http.StatusBadRequest)
 	}
 
-	tx, err := db.Beginx()
+	/*tx, err := db.Beginx()
 	if err != nil {
 		c.Echo().Logger.Errorf("failed to create transaction : %v", err)
 		return c.NoContent(http.StatusInternalServerError)
 	}
 	defer tx.Rollback()
-
-	result, err := tx.Exec("UPDATE chair SET stock = stock - 1 WHERE id = ? AND stock > 0", id)
+	*/
+	result, err := db.Exec("UPDATE chair SET stock = stock - 1 WHERE id = ? AND stock > 0", id)
 	if err != nil {
 		c.Echo().Logger.Errorf("chair stock update failed : %v", err)
 		return c.NoContent(http.StatusInternalServerError)
@@ -716,11 +716,11 @@ func buyChair(c echo.Context) error {
 	soldoutChairIDs = append(soldoutChairIDs, strconv.Itoa(id))
 	soldoutChairLock.Unlock()*/
 
-	err = tx.Commit()
+	/*err = tx.Commit()
 	if err != nil {
 		c.Echo().Logger.Errorf("transaction commit error : %v", err)
 		return c.NoContent(http.StatusInternalServerError)
-	}
+	}*/
 
 	chairCache.Flush()
 
@@ -1065,7 +1065,7 @@ func searchRecommendedEstateWithChair(c echo.Context) error {
 	minLen := len[0]
 	midLen := len[1]
 
-	query = `SELECT * FROM estate WHERE (door_width >= ? AND door_height >= ?) OR (door_width >= ? AND door_height >= ?) ORDER BY popularity DESC, id ASC LIMIT ?`
+	query = `SELECT * FROM estate FORCE INDEX(idx_pop) WHERE (door_width >= ? AND door_height >= ?) OR (door_width >= ? AND door_height >= ?) ORDER BY popularity DESC, id ASC LIMIT ?`
 	err = db.Select(&estates, query, minLen, midLen, midLen, minLen, Limit)
 	if err != nil {
 		if err == sql.ErrNoRows {
