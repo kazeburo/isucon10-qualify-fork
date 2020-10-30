@@ -5,6 +5,7 @@ import (
 	"encoding/csv"
 	"fmt"
 	"io/ioutil"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -37,6 +38,7 @@ var estateSearchConditionJSON []byte
 
 var chairCache = NewSC()
 var estateCache = NewSC()
+var estateObjCache = NewIC()
 var sfGroup singleflight.Group
 
 type InitializeResponse struct {
@@ -362,6 +364,7 @@ func initialize(c echo.Context) error {
 
 	chairCache.Flush()
 	estateCache.Flush()
+	estateObjCache.Flush()
 
 	sqlDir := filepath.Join("..", "mysql", "db")
 	paths := []string{
@@ -384,6 +387,13 @@ func initialize(c echo.Context) error {
 			c.Logger().Errorf("Initialize script error : %v", err)
 			return c.NoContent(http.StatusInternalServerError)
 		}
+	}
+
+	estateObjCache.Flush()
+	estates := []Estate{}
+	_ = db.Select(&estates, `SELECT * FROM estate`)
+	for _, e := range estates {
+		estateObjCache.Set(e.ID, e)
 	}
 
 	return c.JSON(http.StatusOK, InitializeResponse{
@@ -651,11 +661,17 @@ func buyChair(c echo.Context) error {
 		return c.NoContent(http.StatusInternalServerError)
 	}
 
-	chairCache.Flush()
-
 	if rowsAffected == 0 {
 		return c.NoContent(http.StatusNotFound)
 	}
+
+	chairCache.Flush()
+	/*
+		if e, ok := chairObjCache.Get(c.Param("id")); ok {
+			ee, _ := e.(Chair)
+			ee.Stock = ee.Stock - 1
+			chairObjCache.Set(c.Param("id"), ee)
+		}*/
 
 	return c.NoContent(http.StatusOK)
 }
@@ -697,6 +713,10 @@ func getEstateDetail(c echo.Context) error {
 	if err != nil {
 		c.Echo().Logger.Infof("Request parameter \"id\" parse error : %v", err)
 		return c.NoContent(http.StatusBadRequest)
+	}
+
+	if cacheEs, ok := estateObjCache.Get(int64(id)); ok {
+		return c.JSON(http.StatusOK, cacheEs)
 	}
 
 	var estate Estate
@@ -744,6 +764,9 @@ func postEstate(c echo.Context) error {
 		return c.NoContent(http.StatusInternalServerError)
 	}
 
+	maxID := 0
+	_ = db.Get(&maxID, `SELECT max(id) FROM estate`)
+	log.Printf("max_estate: %d", maxID)
 	tx, err := db.Begin()
 	if err != nil {
 		c.Logger().Errorf("failed to begin tx: %v", err)
@@ -788,9 +811,20 @@ func postEstate(c echo.Context) error {
 		return c.NoContent(http.StatusInternalServerError)
 	}
 
+	estates := []Estate{}
+	_ = db.Select(&estates, `SELECT * FROM estate WHERE id > ?`, maxID)
+	// log.Printf("cache set %d", len(estates))
+	for _, e := range estates {
+		estateObjCache.Set(e.ID, e)
+	}
 	estateCache.Flush()
 
 	return c.NoContent(http.StatusCreated)
+}
+
+func appluEstates(ids []int64) []Estate {
+	res, _ := estateObjCache.GetMulti(ids)
+	return res
 }
 
 func searchEstates(c echo.Context) error {
@@ -856,7 +890,7 @@ func searchEstates(c echo.Context) error {
 		return c.NoContent(http.StatusBadRequest)
 	}
 
-	searchQuery := "SELECT * FROM estate WHERE "
+	searchQuery := "SELECT id FROM estate WHERE "
 	countQuery := "SELECT COUNT(*) FROM estate WHERE "
 	searchCondition := strings.Join(conditions, " AND ")
 	limitOffset := " ORDER BY popularity DESC, id ASC LIMIT ? OFFSET ?"
@@ -883,9 +917,10 @@ func searchEstates(c echo.Context) error {
 		}()
 	}
 
-	estates := []Estate{}
+	//estates := []Estate{}
+	ids := []int64{}
 	paramsQ := append(params, perPage, page*perPage)
-	err = db.Select(&estates, searchQuery+searchCondition+limitOffset, paramsQ...)
+	err = db.Select(&ids, searchQuery+searchCondition+limitOffset, paramsQ...)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return c.JSON(http.StatusOK, EstateSearchResponse{Count: 0, Estates: []Estate{}})
@@ -900,7 +935,7 @@ func searchEstates(c echo.Context) error {
 		return c.NoContent(http.StatusInternalServerError)
 	}
 
-	res.Estates = estates
+	res.Estates = appluEstates(ids)
 	b, _ := json.Marshal(res)
 	estateCache.Set(qs, b)
 
@@ -955,7 +990,7 @@ func searchRecommendedEstateWithChair(c echo.Context) error {
 		return c.NoContent(http.StatusInternalServerError)
 	}
 
-	var estates []Estate
+	//var estates []Estate
 	w := chair.Width
 	h := chair.Height
 	d := chair.Depth
@@ -966,8 +1001,9 @@ func searchRecommendedEstateWithChair(c echo.Context) error {
 	minLen := len[0]
 	midLen := len[1]
 
-	query = `SELECT * FROM estate FORCE INDEX(idx_pop) WHERE (door_width >= ? AND door_height >= ?) OR (door_width >= ? AND door_height >= ?) ORDER BY popularity DESC, id ASC LIMIT ?`
-	err = db.Select(&estates, query, minLen, midLen, midLen, minLen, Limit)
+	query = `SELECT id FROM estate FORCE INDEX(idx_pop) WHERE (door_width >= ? AND door_height >= ?) OR (door_width >= ? AND door_height >= ?) ORDER BY popularity DESC, id ASC LIMIT ?`
+	ids := []int64{}
+	err = db.Select(&ids, query, minLen, midLen, midLen, minLen, Limit)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return c.JSON(http.StatusOK, EstateListResponse{[]Estate{}})
@@ -976,7 +1012,7 @@ func searchRecommendedEstateWithChair(c echo.Context) error {
 		return c.NoContent(http.StatusInternalServerError)
 	}
 
-	return c.JSON(http.StatusOK, EstateListResponse{Estates: estates})
+	return c.JSON(http.StatusOK, EstateListResponse{Estates: appluEstates(ids)})
 }
 
 func searchEstateNazotte(c echo.Context) error {
@@ -992,14 +1028,14 @@ func searchEstateNazotte(c echo.Context) error {
 	}
 
 	// log.Printf("%s", coordinates.coordinatesToText())
-	estatesInPolygon := []Estate{}
-	query := fmt.Sprintf("SELECT * FROM estate WHERE ST_Contains(ST_PolygonFromText(%s), point)", coordinates.coordinatesToText())
+	//estatesInPolygon := []Estate{}
+	query := fmt.Sprintf("SELECT id FROM estate WHERE ST_Contains(ST_PolygonFromText(%s), point)", coordinates.coordinatesToText())
 	orderBy := " ORDER BY popularity DESC, id ASC LIMIT 50"
-	err = db.Select(&estatesInPolygon, query+orderBy)
-
+	ids := []int64{}
+	err = db.Select(&ids, query+orderBy)
 	var re EstateSearchResponse
-	re.Estates = estatesInPolygon
-	re.Count = int64(len(estatesInPolygon))
+	re.Estates = appluEstates(ids)
+	re.Count = int64(len(re.Estates))
 
 	return c.JSON(http.StatusOK, re)
 }
@@ -1021,6 +1057,10 @@ func postEstateRequestDocument(c echo.Context) error {
 	if err != nil {
 		c.Echo().Logger.Infof("post request document failed : %v", err)
 		return c.NoContent(http.StatusBadRequest)
+	}
+
+	if _, ok := estateObjCache.Get(int64(id)); ok {
+		return c.NoContent(http.StatusOK)
 	}
 
 	estate := Estate{}

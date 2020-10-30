@@ -1,9 +1,16 @@
 package main
 
-import "sync"
+import (
+	"sync"
+)
 
 type SCache struct {
 	ma map[string]interface{}
+	mu sync.RWMutex
+}
+
+type EsCache struct {
+	ma map[int64]Estate
 	mu sync.RWMutex
 }
 
@@ -29,4 +36,40 @@ func (c *SCache) Flush() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.ma = make(map[string]interface{})
+}
+
+func NewIC() *EsCache {
+	ma := make(map[int64]Estate)
+	return &EsCache{ma: ma}
+}
+
+func (c *EsCache) Get(k int64) (Estate, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	r, ok := c.ma[k]
+	return r, ok
+}
+
+func (c *EsCache) GetMulti(ks []int64) ([]Estate, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	res := []Estate{}
+	for _, k := range ks {
+		if r, ok := c.ma[k]; ok {
+			res = append(res, r)
+		}
+	}
+	return res, len(ks) == len(res)
+}
+
+func (c *EsCache) Set(k int64, v Estate) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.ma[k] = v
+}
+
+func (c *EsCache) Flush() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.ma = make(map[int64]Estate)
 }
