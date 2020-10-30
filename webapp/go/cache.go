@@ -14,6 +14,11 @@ type EsCache struct {
 	mu sync.RWMutex
 }
 
+type ChCache struct {
+	ma map[int64]Chair
+	mu sync.RWMutex
+}
+
 func NewSC() *SCache {
 	ma := make(map[string]interface{})
 	return &SCache{ma: ma}
@@ -36,6 +41,42 @@ func (c *SCache) Flush() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.ma = make(map[string]interface{})
+}
+
+func NewCC() *ChCache {
+	ma := make(map[int64]Chair)
+	return &ChCache{ma: ma}
+}
+
+func (c *ChCache) Get(k int64) (Chair, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	r, ok := c.ma[k]
+	return r, ok
+}
+
+func (c *ChCache) GetMulti(ks []int64) ([]Chair, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	res := []Chair{}
+	for _, k := range ks {
+		if r, ok := c.ma[k]; ok {
+			res = append(res, r)
+		}
+	}
+	return res, len(ks) == len(res)
+}
+
+func (c *ChCache) Set(k int64, v Chair) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.ma[k] = v
+}
+
+func (c *ChCache) Flush() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.ma = make(map[int64]Chair)
 }
 
 func NewIC() *EsCache {

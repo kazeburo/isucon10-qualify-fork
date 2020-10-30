@@ -15,7 +15,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"encoding/json"
 
@@ -37,6 +36,7 @@ var chairSearchConditionJSON []byte
 var estateSearchConditionJSON []byte
 
 var chairCache = NewSC()
+var chairObjCache = NewCC()
 var estateCache = NewSC()
 var estateObjCache = NewIC()
 var sfGroup singleflight.Group
@@ -364,7 +364,6 @@ func initialize(c echo.Context) error {
 
 	chairCache.Flush()
 	estateCache.Flush()
-	estateObjCache.Flush()
 
 	sqlDir := filepath.Join("..", "mysql", "db")
 	paths := []string{
@@ -396,6 +395,13 @@ func initialize(c echo.Context) error {
 		estateObjCache.Set(e.ID, e)
 	}
 
+	chairObjCache.Flush()
+	chairs := []Chair{}
+	_ = db.Select(&chairs, `SELECT * FROM chair`)
+	for _, e := range chairs {
+		chairObjCache.Set(e.ID, e)
+	}
+
 	return c.JSON(http.StatusOK, InitializeResponse{
 		Language: "go",
 	})
@@ -406,6 +412,13 @@ func getChairDetail(c echo.Context) error {
 	if err != nil {
 		c.Echo().Logger.Errorf("Request parameter \"id\" parse error : %v", err)
 		return c.NoContent(http.StatusBadRequest)
+	}
+
+	if e, ok := chairObjCache.Get(int64(id)); ok {
+		if e.Stock <= 0 {
+			return c.NoContent(http.StatusNotFound)
+		}
+		return c.JSON(http.StatusOK, e)
 	}
 
 	chair := Chair{}
@@ -444,7 +457,12 @@ func postChair(c echo.Context) error {
 		return c.NoContent(http.StatusInternalServerError)
 	}
 
-	time.Sleep(1500 * time.Millisecond)
+	//time.Sleep(1500 * time.Millisecond)
+
+	maxID := 0
+	_ = db.Get(&maxID, `SELECT max(id) FROM chair`)
+	log.Printf("max_chair: %d", maxID)
+
 	tx, err := db.Begin()
 	if err != nil {
 		c.Logger().Errorf("failed to begin tx: %v", err)
@@ -493,9 +511,20 @@ func postChair(c echo.Context) error {
 		return c.NoContent(http.StatusInternalServerError)
 	}
 
+	chairs := []Chair{}
+	_ = db.Select(&chairs, `SELECT * FROM chair WHERE id > ?`, maxID)
+	// log.Printf("cache set %d", len(estates))
+	for _, e := range chairs {
+		chairObjCache.Set(e.ID, e)
+	}
 	chairCache.Flush()
 
 	return c.NoContent(http.StatusCreated)
+}
+
+func applyChairs(ids []int64) []Chair {
+	res, _ := chairObjCache.GetMulti(ids)
+	return res
 }
 
 func searchChairs(c echo.Context) error {
@@ -581,7 +610,7 @@ func searchChairs(c echo.Context) error {
 		return c.NoContent(http.StatusBadRequest)
 	}
 
-	searchQuery := "SELECT * FROM chair_stock WHERE "
+	searchQuery := "SELECT id FROM chair_stock WHERE "
 	countQuery := "SELECT COUNT(*) FROM chair_stock WHERE "
 	searchCondition := strings.Join(conditions, " AND ")
 	limitOffset := " ORDER BY popularity DESC, id ASC LIMIT ? OFFSET ?"
@@ -607,9 +636,9 @@ func searchChairs(c echo.Context) error {
 		}()
 	}
 
-	chairs := []Chair{}
+	ids := []int64{}
 	paramsQ := append(params, perPage, page*perPage)
-	err = db.Select(&chairs, searchQuery+searchCondition+limitOffset, paramsQ...)
+	err = db.Select(&ids, searchQuery+searchCondition+limitOffset, paramsQ...)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return c.JSON(http.StatusOK, ChairSearchResponse{Count: 0, Chairs: []Chair{}})
@@ -624,7 +653,7 @@ func searchChairs(c echo.Context) error {
 		return c.NoContent(http.StatusInternalServerError)
 	}
 
-	res.Chairs = chairs
+	res.Chairs = applyChairs(ids)
 	b, _ := json.Marshal(res)
 	chairCache.Set(qs, b)
 
@@ -665,13 +694,11 @@ func buyChair(c echo.Context) error {
 		return c.NoContent(http.StatusNotFound)
 	}
 
+	if e, ok := chairObjCache.Get(int64(id)); ok {
+		e.Stock = e.Stock - 1
+		chairObjCache.Set(e.ID, e)
+	}
 	chairCache.Flush()
-	/*
-		if e, ok := chairObjCache.Get(c.Param("id")); ok {
-			ee, _ := e.(Chair)
-			ee.Stock = ee.Stock - 1
-			chairObjCache.Set(c.Param("id"), ee)
-		}*/
 
 	return c.NoContent(http.StatusOK)
 }
@@ -978,7 +1005,16 @@ func searchRecommendedEstateWithChair(c echo.Context) error {
 		return c.NoContent(http.StatusBadRequest)
 	}
 
-	chair := Chair{}
+	chair, ok := chairObjCache.Get(int64(id))
+	if !ok {
+		return c.NoContent(http.StatusBadRequest)
+	}
+
+	if r, found := estateCache.Get(fmt.Sprintf("recom%d", id)); found {
+		//log.Printf("recom hit")
+		return c.JSONBlob(http.StatusOK, r.([]byte))
+	}
+	/*chair := Chair{}
 	query := `SELECT * FROM chair WHERE id = ?`
 	err = db.Get(&chair, query, id)
 	if err != nil {
@@ -988,7 +1024,7 @@ func searchRecommendedEstateWithChair(c echo.Context) error {
 		}
 		c.Logger().Errorf("Database execution error : %v", err)
 		return c.NoContent(http.StatusInternalServerError)
-	}
+	}*/
 
 	//var estates []Estate
 	w := chair.Width
@@ -1001,7 +1037,7 @@ func searchRecommendedEstateWithChair(c echo.Context) error {
 	minLen := len[0]
 	midLen := len[1]
 
-	query = `SELECT id FROM estate FORCE INDEX(idx_pop) WHERE (door_width >= ? AND door_height >= ?) OR (door_width >= ? AND door_height >= ?) ORDER BY popularity DESC, id ASC LIMIT ?`
+	query := `SELECT id FROM estate FORCE INDEX(idx_pop) WHERE (door_width >= ? AND door_height >= ?) OR (door_width >= ? AND door_height >= ?) ORDER BY popularity DESC, id ASC LIMIT ?`
 	ids := []int64{}
 	err = db.Select(&ids, query, minLen, midLen, midLen, minLen, Limit)
 	if err != nil {
@@ -1012,7 +1048,10 @@ func searchRecommendedEstateWithChair(c echo.Context) error {
 		return c.NoContent(http.StatusInternalServerError)
 	}
 
-	return c.JSON(http.StatusOK, EstateListResponse{Estates: appluEstates(ids)})
+	b, _ := json.Marshal(EstateListResponse{Estates: appluEstates(ids)})
+	estateCache.Set(fmt.Sprintf("recom%d", id), b)
+
+	return c.JSONBlob(http.StatusOK, b)
 }
 
 func searchEstateNazotte(c echo.Context) error {
