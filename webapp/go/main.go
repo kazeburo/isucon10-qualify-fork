@@ -849,7 +849,7 @@ func postEstate(c echo.Context) error {
 	return c.NoContent(http.StatusCreated)
 }
 
-func appluEstates(ids []int64) []Estate {
+func applyEstates(ids []int64) []Estate {
 	res, _ := estateObjCache.GetMulti(ids)
 	return res
 }
@@ -944,7 +944,6 @@ func searchEstates(c echo.Context) error {
 		}()
 	}
 
-	//estates := []Estate{}
 	ids := []int64{}
 	paramsQ := append(params, perPage, page*perPage)
 	err = db.Select(&ids, searchQuery+searchCondition+limitOffset, paramsQ...)
@@ -962,7 +961,7 @@ func searchEstates(c echo.Context) error {
 		return c.NoContent(http.StatusInternalServerError)
 	}
 
-	res.Estates = appluEstates(ids)
+	res.Estates = applyEstates(ids)
 	b, _ := json.Marshal(res)
 	estateCache.Set(qs, b)
 
@@ -1014,19 +1013,7 @@ func searchRecommendedEstateWithChair(c echo.Context) error {
 		//log.Printf("recom hit")
 		return c.JSONBlob(http.StatusOK, r.([]byte))
 	}
-	/*chair := Chair{}
-	query := `SELECT * FROM chair WHERE id = ?`
-	err = db.Get(&chair, query, id)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			c.Logger().Infof("Requested chair id \"%v\" not found", id)
-			return c.NoContent(http.StatusBadRequest)
-		}
-		c.Logger().Errorf("Database execution error : %v", err)
-		return c.NoContent(http.StatusInternalServerError)
-	}*/
 
-	//var estates []Estate
 	w := chair.Width
 	h := chair.Height
 	d := chair.Depth
@@ -1048,7 +1035,7 @@ func searchRecommendedEstateWithChair(c echo.Context) error {
 		return c.NoContent(http.StatusInternalServerError)
 	}
 
-	b, _ := json.Marshal(EstateListResponse{Estates: appluEstates(ids)})
+	b, _ := json.Marshal(EstateListResponse{Estates: applyEstates(ids)})
 	estateCache.Set(fmt.Sprintf("recom%d", id), b)
 
 	return c.JSONBlob(http.StatusOK, b)
@@ -1067,13 +1054,12 @@ func searchEstateNazotte(c echo.Context) error {
 	}
 
 	// log.Printf("%s", coordinates.coordinatesToText())
-	//estatesInPolygon := []Estate{}
 	query := fmt.Sprintf("SELECT id FROM estate WHERE ST_Contains(ST_PolygonFromText(%s), point)", coordinates.coordinatesToText())
 	orderBy := " ORDER BY popularity DESC, id ASC LIMIT 50"
 	ids := []int64{}
 	err = db.Select(&ids, query+orderBy)
 	var re EstateSearchResponse
-	re.Estates = appluEstates(ids)
+	re.Estates = applyEstates(ids)
 	re.Count = int64(len(re.Estates))
 
 	return c.JSON(http.StatusOK, re)
