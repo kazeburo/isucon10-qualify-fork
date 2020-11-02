@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/csv"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unsafe"
 
 	"encoding/json"
 
@@ -259,63 +261,77 @@ func init() {
 	estateSearchConditionJSON, _ = json.Marshal(estateSearchCondition)
 }
 
-var botUA = []*regexp.Regexp{
-	regexp.MustCompile(`^/$`),
-	regexp.MustCompile(`(ISUCONbot-Image\/|Mediapartners-ISUCON|ISUCONCoffee|ISUCONFeedSeeker(Beta)?|crawler \(https:\/\/isucon\.invalid\/(support\/faq\/|help\/jp\/)|isubot|Isupider|Isupider(-image)?\+)`),
-	/*regexp.MustCompile(`ISUCONbot-Image\/`),
-	regexp.MustCompile(`Mediapartners-ISUCON`),
-	regexp.MustCompile(`ISUCONCoffee`),
-	regexp.MustCompile(`ISUCONFeedSeeker(Beta)?`),
-	regexp.MustCompile(`crawler \(https:\/\/isucon\.invalid\/(support\/faq\/|help\/jp\/)`),
-	regexp.MustCompile(`isubot`),
-	regexp.MustCompile(`Isupider`),
-	regexp.MustCompile(`Isupider(-image)?\+`),*/
-	regexp.MustCompile(`(?i)(bot|crawler|spider)(?:[-_ .\/;@()]|$)`),
-}
+//var botUA = []*regexp.Regexp{
+//regexp.MustCompile(`^/$`),
+//regexp.MustCompile(`(ISUCONbot-Image\/|Mediapartners-ISUCON|ISUCONCoffee|ISUCONFeedSeeker(Beta)?|crawler \(https:\/\/isucon\.invalid\/(support\/faq\/|help\/jp\/)|isubot|Isupider|Isupider(-image)?\+)`),
+/*regexp.MustCompile(`ISUCONbot-Image\/`),
+regexp.MustCompile(`Mediapartners-ISUCON`),
+regexp.MustCompile(`ISUCONCoffee`),
+regexp.MustCompile(`ISUCONFeedSeeker(Beta)?`),
+regexp.MustCompile(`crawler \(https:\/\/isucon\.invalid\/(support\/faq\/|help\/jp\/)`),
+regexp.MustCompile(`isubot`),
+regexp.MustCompile(`Isupider`),
+regexp.MustCompile(`Isupider(-image)?\+`),*/
+//	regexp.MustCompile(`(?i)(bot|crawler|spider)(?:[-_ .\/;@()]|$)`),
+//}
 
 // Banbot middleware ban bot
+var slash = []byte("/")
+var botUAb = [][]byte{
+	[]byte("ISUCONbot-Image/"),
+	[]byte("Mediapartners-ISUCON"),
+	[]byte("ISUCONCoffee"),
+	[]byte("ISUCONFeedSeeker"),
+	[]byte("crawler (https://isucon.invalid/support/faq/"),
+	[]byte("crawler (https://isucon.invalid/help/jp/"),
+	[]byte("isubot"),
+	[]byte("Isupider"),
+}
+var spiderReg = regexp.MustCompile(`(?i)(bot|crawler|spider)(?:[-_ .\/;@()]|$)`)
+
+func uaLikeBot(ua []byte) bool {
+	for _, b := range botUAb {
+		if bytes.Contains(ua, b) {
+			return true
+		}
+	}
+	return false
+}
+
+func unsafeLowerString(b []byte) string {
+	return strings.ToLower(*(*string)(unsafe.Pointer(&b)))
+}
+
 func Banbot(c *fiber.Ctx) error {
 	ua := c.Request().Header.UserAgent()
-	for _, r := range botUA {
-		if r.Match(ua) {
+	if bytes.Equal(ua, slash) {
+		return c.SendStatus(fiber.StatusForbidden)
+	}
+	if uaLikeBot(ua) {
+		return c.SendStatus(fiber.StatusForbidden)
+	}
+	uaLower := unsafeLowerString(ua)
+	if strings.Contains(uaLower, "bot") ||
+		strings.Contains(uaLower, "crawler") ||
+		strings.Contains(uaLower, "spider") {
+		if spiderReg.Match(ua) {
 			return c.SendStatus(fiber.StatusForbidden)
 		}
 	}
 	return c.Next()
 }
 
-/*func WithTrace(next echo.HandlerFunc) echo.HandlerFunc {
-	return func(ctx echo.Context) (err error) {
-		handler := &ochttp.Handler{
-			Handler: http.HandlerFunc(
-				func(w http.ResponseWriter, r *http.Request) {
-					ctx.SetRequest(r)
-					ctx.SetResponse(echo.NewResponse(w, ctx.Echo()))
-					_ = next(ctx)
-				},
-			),
-		}
-		handler.ServeHTTP(ctx.Response(), ctx.Request())
-		return
-	}
-}*/
-
 func main() {
 	initProfiler()
-	initTrace()
+	//initTrace()
 
 	chairCache.Flush()
 	estateCache.Flush()
 
 	// Fiber instance
 	e := fiber.New()
-	//e.Debug = false
-	// e.Logger.SetLevel(log.DEBUG)
 
 	// Middleware
-	// e.Use(middleware.Logger())
-	//e.Use(WithTrace)
-	//e.Use(middleware.Recover())
 	e.Use(Banbot)
 
 	// Initialize
@@ -636,7 +652,7 @@ func searchChairs(c *fiber.Ctx) error {
 		}()
 	}
 
-	ids := []int64{}
+	ids := make([]int64, 0, perPage)
 	paramsQ := append(params, perPage, page*perPage)
 	err = db.Select(&ids, searchQuery+searchCondition+limitOffset, paramsQ...)
 	if err != nil {
@@ -713,9 +729,9 @@ func getLowPricedChair(c *fiber.Ctx) error {
 	}
 
 	r, e, _ := sfGroup.Do("getLowPricedChair", func() (interface{}, error) {
-		var chairs []Chair
-		query := `SELECT * FROM chair_stock ORDER BY price ASC, id ASC LIMIT ?`
-		err := db.Select(&chairs, query, Limit)
+		ids := make([]int64, 0, 50)
+		query := `SELECT id FROM chair_stock ORDER BY price ASC, id ASC LIMIT ?`
+		err := db.Select(&ids, query, Limit)
 		if err != nil {
 			if err == sql.ErrNoRows {
 				log.Printf("getLowPricedChair not found")
@@ -724,7 +740,7 @@ func getLowPricedChair(c *fiber.Ctx) error {
 			log.Printf("getLowPricedChair DB execution error : %v", err)
 			return nil, err
 		}
-		b, _ := json.Marshal(ChairListResponse{Chairs: chairs})
+		b, _ := json.Marshal(ChairListResponse{Chairs: applyChairs(ids)})
 		chairCache.Set("getLowPricedChair", b)
 
 		return b, nil
@@ -944,7 +960,7 @@ func searchEstates(c *fiber.Ctx) error {
 		}()
 	}
 
-	ids := []int64{}
+	ids := make([]int64, 0, perPage)
 	paramsQ := append(params, perPage, page*perPage)
 	err = db.Select(&ids, searchQuery+searchCondition+limitOffset, paramsQ...)
 	if err != nil {
@@ -974,9 +990,9 @@ func getLowPricedEstate(c *fiber.Ctx) error {
 	}
 	r, e, _ := sfGroup.Do("getLowPricedEstate", func() (interface{}, error) {
 
-		estates := make([]Estate, 0, Limit)
-		query := `SELECT * FROM estate ORDER BY rent ASC, id ASC LIMIT ?`
-		err := db.Select(&estates, query, Limit)
+		ids := make([]int64, 0, Limit)
+		query := `SELECT id FROM estate ORDER BY rent ASC, id ASC LIMIT ?`
+		err := db.Select(&ids, query, Limit)
 		if err != nil {
 			if err != sql.ErrNoRows {
 				log.Printf("getLowPricedEstate not found")
@@ -986,7 +1002,7 @@ func getLowPricedEstate(c *fiber.Ctx) error {
 			return nil, err
 		}
 
-		b, _ := json.Marshal(EstateListResponse{Estates: estates})
+		b, _ := json.Marshal(EstateListResponse{Estates: applyEstates(ids)})
 		estateCache.Set("getLowPricedEstate", b)
 
 		return b, nil
@@ -1009,7 +1025,7 @@ func searchRecommendedEstateWithChair(c *fiber.Ctx) error {
 		return c.SendStatus(fiber.StatusBadRequest)
 	}
 
-	if r, found := estateCache.Get(fmt.Sprintf("recom%d", id)); found {
+	if r, found := estateCache.Get("recom" + c.Params("id")); found {
 		//log.Printf("recom hit")
 		return JSONBlob(c, fiber.StatusOK, r.([]byte))
 	}
@@ -1025,7 +1041,7 @@ func searchRecommendedEstateWithChair(c *fiber.Ctx) error {
 	midLen := len[1]
 
 	query := `SELECT id FROM estate FORCE INDEX(idx_pop) WHERE (door_width >= ? AND door_height >= ?) OR (door_width >= ? AND door_height >= ?) ORDER BY popularity DESC, id ASC LIMIT ?`
-	ids := []int64{}
+	ids := make([]int64, 0, Limit)
 	err = db.Select(&ids, query, minLen, midLen, midLen, minLen, Limit)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -1036,7 +1052,7 @@ func searchRecommendedEstateWithChair(c *fiber.Ctx) error {
 	}
 
 	b, _ := json.Marshal(EstateListResponse{Estates: applyEstates(ids)})
-	estateCache.Set(fmt.Sprintf("recom%d", id), b)
+	estateCache.Set("recom"+c.Params("id"), b)
 
 	return JSONBlob(c, fiber.StatusOK, b)
 }
@@ -1054,7 +1070,7 @@ func searchEstateNazotte(c *fiber.Ctx) error {
 	}
 
 	// log.Printf("%s", coordinates.coordinatesToText())
-	query := fmt.Sprintf("SELECT id FROM estate WHERE ST_Contains(ST_PolygonFromText(%s), point)", coordinates.coordinatesToText())
+	query := fmt.Sprintf("SELECT id FROM estate FORCE INDEX(idx_point) WHERE ST_Contains(ST_PolygonFromText(%s), point)", coordinates.coordinatesToText())
 	orderBy := " ORDER BY popularity DESC, id ASC LIMIT 50"
 	ids := []int64{}
 	err = db.Select(&ids, query+orderBy)

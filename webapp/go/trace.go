@@ -28,7 +28,7 @@ func initProfiler() {
 	serviceVersion := time.Now().Format("2006.01.02.15.04")
 	projectID := os.Getenv("GOOGLE_CLOUD_PROJECT")
 	if projectID == "" {
-		projectID = "kazeburo"
+		projectID = "kouzoh-p-kazeburo"
 	}
 	if err := profiler.Start(profiler.Config{
 		Service:        "isucon10q",

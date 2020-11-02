@@ -58,7 +58,7 @@ func (c *ChCache) Get(k int64) (Chair, bool) {
 func (c *ChCache) GetMulti(ks []int64) ([]Chair, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	res := []Chair{}
+	res := make([]Chair, 0, len(ks))
 	for _, k := range ks {
 		if r, ok := c.ma[k]; ok {
 			res = append(res, r)
@@ -94,7 +94,7 @@ func (c *EsCache) Get(k int64) (Estate, bool) {
 func (c *EsCache) GetMulti(ks []int64) ([]Estate, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	res := []Estate{}
+	res := make([]Estate, 0, len(ks))
 	for _, k := range ks {
 		if r, ok := c.ma[k]; ok {
 			res = append(res, r)
