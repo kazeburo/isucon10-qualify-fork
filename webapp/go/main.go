@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -22,6 +21,7 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/gofiber/fiber/v2"
 	"github.com/jmoiron/sqlx"
+	"github.com/niubaoshu/gotiny"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -168,6 +168,10 @@ type RecordMapper struct {
 	err    error
 }
 
+func UnsafeString(b []byte) string {
+	return *(*string)(unsafe.Pointer(&b))
+}
+
 func (r *RecordMapper) next() (string, error) {
 	if r.err != nil {
 		return "", r.err
@@ -276,7 +280,6 @@ regexp.MustCompile(`Isupider(-image)?\+`),*/
 //}
 
 // Banbot middleware ban bot
-var slash = []byte("/")
 var botUAb = [][]byte{
 	[]byte("ISUCONbot-Image/"),
 	[]byte("Mediapartners-ISUCON"),
@@ -287,7 +290,17 @@ var botUAb = [][]byte{
 	[]byte("isubot"),
 	[]byte("Isupider"),
 }
-var spiderReg = regexp.MustCompile(`(?i)(bot|crawler|spider)(?:[-_ .\/;@()]|$)`)
+var spiderSpecialKey = [][]byte{
+	[]byte("-"),
+	[]byte("_"),
+	[]byte(" "),
+	[]byte("."),
+	[]byte("/"),
+	[]byte(";"),
+	[]byte("@"),
+	[]byte("("),
+	[]byte(")"),
+}
 
 func uaLikeBot(ua []byte) bool {
 	for _, b := range botUAb {
@@ -298,25 +311,49 @@ func uaLikeBot(ua []byte) bool {
 	return false
 }
 
-func unsafeLowerString(b []byte) string {
-	return strings.ToLower(*(*string)(unsafe.Pointer(&b)))
+func uaLikeSpider(d []byte, s []byte) bool {
+	p1 := 0
+	dlen := len(d)
+	slen := len(s)
+	found := false
+PARENT:
+	for {
+		if dlen == p1 {
+			break
+		}
+		p2 := bytes.Index(d[p1:], s)
+		if p2 < 0 {
+			break
+		}
+		if p1+p2+slen == dlen {
+			found = true
+			break
+		}
+		p3 := p1 + p2 + slen
+		for _, ssk := range spiderSpecialKey {
+			if bytes.Equal(d[p3:p3+1], ssk) {
+				found = true
+				break PARENT
+			}
+		}
+		p1 = p3 + 1
+	}
+	return found
 }
 
 func Banbot(c *fiber.Ctx) error {
 	ua := c.Request().Header.UserAgent()
-	if bytes.Equal(ua, slash) {
+	if bytes.Equal(ua, []byte("/")) {
 		return c.SendStatus(fiber.StatusForbidden)
 	}
 	if uaLikeBot(ua) {
 		return c.SendStatus(fiber.StatusForbidden)
 	}
-	uaLower := unsafeLowerString(ua)
-	if strings.Contains(uaLower, "bot") ||
-		strings.Contains(uaLower, "crawler") ||
-		strings.Contains(uaLower, "spider") {
-		if spiderReg.Match(ua) {
-			return c.SendStatus(fiber.StatusForbidden)
-		}
+	uaLower := bytes.ToLower(ua)
+	if uaLikeSpider(uaLower, []byte("bot")) ||
+		uaLikeSpider(uaLower, []byte("crawler")) ||
+		uaLikeSpider(uaLower, []byte("spider")) {
+		return c.SendStatus(fiber.StatusForbidden)
 	}
 	return c.Next()
 }
@@ -544,10 +581,10 @@ func JSONBlob(c *fiber.Ctx, status int, body []byte) error {
 }
 
 func searchChairs(c *fiber.Ctx) error {
-	conditions := make([]string, 0)
-	params := make([]interface{}, 0)
+	conditions := make([]string, 0, 8)
+	params := make([]interface{}, 0, 8)
 
-	qs := string(c.Request().URI().QueryString())
+	qs := UnsafeString(c.Request().URI().QueryString())
 	if r, found := chairCache.Get(qs); found {
 		return JSONBlob(c, fiber.StatusOK, r.([]byte))
 	}
@@ -632,8 +669,7 @@ func searchChairs(c *fiber.Ctx) error {
 	limitOffset := " ORDER BY popularity DESC, id ASC LIMIT ? OFFSET ?"
 	//log.Printf("searchCondition: %s", searchCondition)
 	var res ChairSearchResponse
-	ckj, _ := json.Marshal(params)
-	countKey := searchCondition + string(ckj)
+	countKey := searchCondition + UnsafeString(gotiny.Marshal(&params))
 	r, found := chairCache.Get(countKey)
 	if found {
 		//log.Printf("Hit %s", countKey)
@@ -874,7 +910,7 @@ func searchEstates(c *fiber.Ctx) error {
 	conditions := make([]string, 0)
 	params := make([]interface{}, 0)
 
-	qs := string(c.Context().URI().QueryString())
+	qs := UnsafeString(c.Context().URI().QueryString())
 	if r, found := estateCache.Get(qs); found {
 		return JSONBlob(c, fiber.StatusOK, r.([]byte))
 	}
@@ -939,8 +975,7 @@ func searchEstates(c *fiber.Ctx) error {
 	limitOffset := " ORDER BY popularity DESC, id ASC LIMIT ? OFFSET ?"
 	//fmt.Printf("%s\n", searchCondition)
 	var res EstateSearchResponse
-	ckj, _ := json.Marshal(params)
-	countKey := searchCondition + string(ckj)
+	countKey := searchCondition + UnsafeString(gotiny.Marshal(&params))
 	r, found := estateCache.Get(countKey)
 	if found {
 		//log.Printf("Hit %s", countKey)
@@ -1120,34 +1155,6 @@ func postEstateRequestDocument(c *fiber.Ctx) error {
 
 func getEstateSearchCondition(c *fiber.Ctx) error {
 	return JSONBlob(c, fiber.StatusOK, estateSearchConditionJSON)
-}
-
-func (cs Coordinates) getBoundingBox() BoundingBox {
-	coordinates := cs.Coordinates
-	boundingBox := BoundingBox{
-		TopLeftCorner: Coordinate{
-			Latitude: coordinates[0].Latitude, Longitude: coordinates[0].Longitude,
-		},
-		BottomRightCorner: Coordinate{
-			Latitude: coordinates[0].Latitude, Longitude: coordinates[0].Longitude,
-		},
-	}
-	for _, coordinate := range coordinates {
-		if boundingBox.TopLeftCorner.Latitude > coordinate.Latitude {
-			boundingBox.TopLeftCorner.Latitude = coordinate.Latitude
-		}
-		if boundingBox.TopLeftCorner.Longitude > coordinate.Longitude {
-			boundingBox.TopLeftCorner.Longitude = coordinate.Longitude
-		}
-
-		if boundingBox.BottomRightCorner.Latitude < coordinate.Latitude {
-			boundingBox.BottomRightCorner.Latitude = coordinate.Latitude
-		}
-		if boundingBox.BottomRightCorner.Longitude < coordinate.Longitude {
-			boundingBox.BottomRightCorner.Longitude = coordinate.Longitude
-		}
-	}
-	return boundingBox
 }
 
 func (cs Coordinates) coordinatesToText() string {

@@ -12,6 +12,7 @@ require (
 	github.com/gofiber/fiber/v2 v2.1.2
 	github.com/jmoiron/sqlx v1.2.0
 	github.com/klauspost/compress v1.11.2 // indirect
+	github.com/niubaoshu/gotiny v0.0.3
 	github.com/stretchr/testify v1.5.1 // indirect
 	go.opencensus.io v0.22.5
 	golang.org/x/sync v0.0.0-20200625203802-6e8e738ad208
