@@ -18,6 +18,7 @@ import (
 	"unsafe"
 
 	"github.com/isucon/isucon10-qualify/isuumo/types"
+	"github.com/mailru/easyjson/jwriter"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/gofiber/fiber/v2"
@@ -358,6 +359,12 @@ func initialize(c *fiber.Ctx) error {
 	})
 }
 
+var bytesPool = sync.Pool{
+	New: func() interface{} {
+		return make([]byte, 0, 16*1024)
+	},
+}
+
 func getChairDetail(c *fiber.Ctx) error {
 	id, err := strconv.Atoi(c.Params("id"))
 	if err != nil {
@@ -369,8 +376,11 @@ func getChairDetail(c *fiber.Ctx) error {
 		if e.Stock <= 0 {
 			return c.SendStatus(fiber.StatusNotFound)
 		}
-		b, _ := e.MarshalJSON()
-		return c.Type("application/json").Status(fiber.StatusOK).Send(b)
+		s := bytesPool.Get().([]byte)
+		defer bytesPool.Put(s)
+		w := jwriter.Writer{}
+		e.MarshalEasyJSON(&w)
+		return c.Type("application/json").Status(fiber.StatusOK).Send(w.Buffer.BuildBytes(s))
 	}
 
 	chair := types.Chair{}
@@ -389,8 +399,11 @@ func getChairDetail(c *fiber.Ctx) error {
 		return c.SendStatus(fiber.StatusNotFound)
 	}
 
-	b, _ := chair.MarshalJSON()
-	return c.Type("application/json").Status(fiber.StatusOK).Send(b)
+	s := bytesPool.Get().([]byte)
+	defer bytesPool.Put(s)
+	w := jwriter.Writer{}
+	chair.MarshalEasyJSON(&w)
+	return c.Type("application/json").Status(fiber.StatusOK).Send(w.Buffer.BuildBytes(s))
 }
 
 func postChair(c *fiber.Ctx) error {
@@ -710,8 +723,11 @@ func getEstateDetail(c *fiber.Ctx) error {
 	}
 
 	if cacheEs, ok := estateObjCache.Get(int64(id)); ok {
-		b, _ := cacheEs.MarshalJSON()
-		return c.Type("application/json").Status(fiber.StatusOK).Send(b)
+		s := bytesPool.Get().([]byte)
+		defer bytesPool.Put(s)
+		w := jwriter.Writer{}
+		cacheEs.MarshalEasyJSON(&w)
+		return c.Type("application/json").Status(fiber.StatusOK).Send(w.Buffer.BuildBytes(s))
 	}
 
 	var estate types.Estate
@@ -724,8 +740,11 @@ func getEstateDetail(c *fiber.Ctx) error {
 		log.Printf("Database Execution error : %v", err)
 		return c.SendStatus(fiber.StatusInternalServerError)
 	}
-	b, _ := estate.MarshalJSON()
-	return c.Type("application/json").Status(fiber.StatusOK).Send(b)
+	s := bytesPool.Get().([]byte)
+	defer bytesPool.Put(s)
+	w := jwriter.Writer{}
+	estate.MarshalEasyJSON(&w)
+	return c.Type("application/json").Status(fiber.StatusOK).Send(w.Buffer.BuildBytes(s))
 }
 
 func getRange(cond types.RangeCondition, rangeID string) (*types.Range, error) {
@@ -1023,8 +1042,12 @@ func searchEstateNazotte(c *fiber.Ctx) error {
 	var re types.EstateSearchResponse
 	re.Estates = applyEstates(ids)
 	re.Count = int64(len(re.Estates))
-	b, _ := re.MarshalJSON()
-	return c.Type("application/json").Status(fiber.StatusOK).Send(b)
+
+	s := bytesPool.Get().([]byte)
+	defer bytesPool.Put(s)
+	w := jwriter.Writer{}
+	re.MarshalEasyJSON(&w)
+	return c.Type("application/json").Status(fiber.StatusOK).Send(w.Buffer.BuildBytes(s))
 }
 
 func postEstateRequestDocument(c *fiber.Ctx) error {
