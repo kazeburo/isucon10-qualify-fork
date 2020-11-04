@@ -67,6 +67,8 @@ github.com/go-gl/glfw/v3.3/glfw v0.0.0-20200222043503-6f7a984d4dc4/go.mod h1:tQ2
 github.com/go-sql-driver/mysql v1.4.0/go.mod h1:zAC/RDZ24gD3HViQzih4MyKcchzm+sOG5ZlKdlhCg5w=
 github.com/go-sql-driver/mysql v1.5.0 h1:ozyZYNQW3x3HtqT1jira07DN2PArx2v7/mN66gGcHOs=
 github.com/go-sql-driver/mysql v1.5.0/go.mod h1:DCzpHaOWr8IXmIStZouvnhqoel9Qv2LBy8hT2VhHyBg=
+github.com/goccy/go-json v0.1.13 h1:YMXNozBZ133RbWQe2vd3vTkM7EwW2YMRvXDh4gnSzEU=
+github.com/goccy/go-json v0.1.13/go.mod h1:6MelG93GURQebXPDq3khkgXZkazVtN9CRI+MGFi0w8I=
 github.com/gofiber/fiber/v2 v2.1.2 h1:b4rpt9xtj7LxT1Vp3yR76LOfs6ZzPJybbNMjjpn+fos=
 github.com/gofiber/fiber/v2 v2.1.2/go.mod h1:jMNH7iuOJ1AGdoJrx1OwaZIX7SOrQUtJi9R35QWhi4s=
 github.com/golang/glog v0.0.0-20160126235308-23def4e6c14b/go.mod h1:SBH7ygxi8pfUlaOkMMuAQtPIUF8ecWP5IEl/CR7VP2Q=

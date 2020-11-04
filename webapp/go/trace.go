@@ -50,7 +50,7 @@ func initTrace() {
 	}*/
 	projectID := os.Getenv("GOOGLE_CLOUD_PROJECT")
 	if projectID == "" {
-		projectID = "kouzoh-p-kazeburo"
+		projectID = "kazeburo"
 	}
 
 	exporter, err := stackdriver.NewExporter(stackdriver.Options{

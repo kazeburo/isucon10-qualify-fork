@@ -43,6 +43,14 @@ func (c *SCache) Flush() {
 	c.ma = make(map[string]interface{})
 }
 
+func (c *SCache) FlushWithNew(k string, v interface{}) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	n := make(map[string]interface{})
+	n[k] = v
+	c.ma = n
+}
+
 func NewCC() *ChCache {
 	ma := make(map[int64]Chair)
 	return &ChCache{ma: ma}
