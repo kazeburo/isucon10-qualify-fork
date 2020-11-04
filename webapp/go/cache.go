@@ -65,16 +65,17 @@ func (c *ChCache) Get(k int64) (types.Chair, bool) {
 	return r, ok
 }
 
-func (c *ChCache) GetMulti(ks []int64) ([]types.Chair, bool) {
+func (c *ChCache) GetMulti(ks []int64, arr *[]types.Chair) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	res := make([]types.Chair, 0, len(ks))
+	res := *arr
+	res = res[:0]
 	for _, k := range ks {
 		if r, ok := c.ma[k]; ok {
 			res = append(res, r)
 		}
 	}
-	return res, len(ks) == len(res)
+	*arr = res
 }
 
 func (c *ChCache) Set(k int64, v types.Chair) {
@@ -101,16 +102,17 @@ func (c *EsCache) Get(k int64) (types.Estate, bool) {
 	return r, ok
 }
 
-func (c *EsCache) GetMulti(ks []int64) ([]types.Estate, bool) {
+func (c *EsCache) GetMulti(ks []int64, arr *[]types.Estate) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	res := make([]types.Estate, 0, len(ks))
+	res := *arr
+	res = res[:0]
 	for _, k := range ks {
 		if r, ok := c.ma[k]; ok {
 			res = append(res, r)
 		}
 	}
-	return res, len(ks) == len(res)
+	*arr = res
 }
 
 func (c *EsCache) Set(k int64, v types.Estate) {

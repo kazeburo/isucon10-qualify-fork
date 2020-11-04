@@ -411,23 +411,31 @@ func easyjson6601e8cdDecodeGithubComIsuconIsucon10QualifyIsuumoTypes4(in *jlexer
 				in.Skip()
 				out.Estates = nil
 			} else {
-				in.Delim('[')
 				if out.Estates == nil {
-					if !in.IsDelim(']') {
-						out.Estates = make([]Estate, 0, 0)
-					} else {
-						out.Estates = []Estate{}
-					}
+					out.Estates = new([]Estate)
+				}
+				if in.IsNull() {
+					in.Skip()
+					*out.Estates = nil
 				} else {
-					out.Estates = (out.Estates)[:0]
+					in.Delim('[')
+					if *out.Estates == nil {
+						if !in.IsDelim(']') {
+							*out.Estates = make([]Estate, 0, 0)
+						} else {
+							*out.Estates = []Estate{}
+						}
+					} else {
+						*out.Estates = (*out.Estates)[:0]
+					}
+					for !in.IsDelim(']') {
+						var v7 Estate
+						(v7).UnmarshalEasyJSON(in)
+						*out.Estates = append(*out.Estates, v7)
+						in.WantComma()
+					}
+					in.Delim(']')
 				}
-				for !in.IsDelim(']') {
-					var v7 Estate
-					(v7).UnmarshalEasyJSON(in)
-					out.Estates = append(out.Estates, v7)
-					in.WantComma()
-				}
-				in.Delim(']')
 			}
 		default:
 			in.SkipRecursive()
@@ -451,17 +459,21 @@ func easyjson6601e8cdEncodeGithubComIsuconIsucon10QualifyIsuumoTypes4(out *jwrit
 	{
 		const prefix string = ",\"estates\":"
 		out.RawString(prefix)
-		if in.Estates == nil && (out.Flags&jwriter.NilSliceAsEmpty) == 0 {
+		if in.Estates == nil {
 			out.RawString("null")
 		} else {
-			out.RawByte('[')
-			for v8, v9 := range in.Estates {
-				if v8 > 0 {
-					out.RawByte(',')
+			if *in.Estates == nil && (out.Flags&jwriter.NilSliceAsEmpty) == 0 {
+				out.RawString("null")
+			} else {
+				out.RawByte('[')
+				for v8, v9 := range *in.Estates {
+					if v8 > 0 {
+						out.RawByte(',')
+					}
+					(v9).MarshalEasyJSON(out)
 				}
-				(v9).MarshalEasyJSON(out)
+				out.RawByte(']')
 			}
-			out.RawByte(']')
 		}
 	}
 	out.RawByte('}')
@@ -601,23 +613,31 @@ func easyjson6601e8cdDecodeGithubComIsuconIsucon10QualifyIsuumoTypes6(in *jlexer
 				in.Skip()
 				out.Estates = nil
 			} else {
-				in.Delim('[')
 				if out.Estates == nil {
-					if !in.IsDelim(']') {
-						out.Estates = make([]Estate, 0, 0)
-					} else {
-						out.Estates = []Estate{}
-					}
+					out.Estates = new([]Estate)
+				}
+				if in.IsNull() {
+					in.Skip()
+					*out.Estates = nil
 				} else {
-					out.Estates = (out.Estates)[:0]
+					in.Delim('[')
+					if *out.Estates == nil {
+						if !in.IsDelim(']') {
+							*out.Estates = make([]Estate, 0, 0)
+						} else {
+							*out.Estates = []Estate{}
+						}
+					} else {
+						*out.Estates = (*out.Estates)[:0]
+					}
+					for !in.IsDelim(']') {
+						var v10 Estate
+						(v10).UnmarshalEasyJSON(in)
+						*out.Estates = append(*out.Estates, v10)
+						in.WantComma()
+					}
+					in.Delim(']')
 				}
-				for !in.IsDelim(']') {
-					var v10 Estate
-					(v10).UnmarshalEasyJSON(in)
-					out.Estates = append(out.Estates, v10)
-					in.WantComma()
-				}
-				in.Delim(']')
 			}
 		default:
 			in.SkipRecursive()
@@ -636,17 +656,21 @@ func easyjson6601e8cdEncodeGithubComIsuconIsucon10QualifyIsuumoTypes6(out *jwrit
 	{
 		const prefix string = ",\"estates\":"
 		out.RawString(prefix[1:])
-		if in.Estates == nil && (out.Flags&jwriter.NilSliceAsEmpty) == 0 {
+		if in.Estates == nil {
 			out.RawString("null")
 		} else {
-			out.RawByte('[')
-			for v11, v12 := range in.Estates {
-				if v11 > 0 {
-					out.RawByte(',')
+			if *in.Estates == nil && (out.Flags&jwriter.NilSliceAsEmpty) == 0 {
+				out.RawString("null")
+			} else {
+				out.RawByte('[')
+				for v11, v12 := range *in.Estates {
+					if v11 > 0 {
+						out.RawByte(',')
+					}
+					(v12).MarshalEasyJSON(out)
 				}
-				(v12).MarshalEasyJSON(out)
+				out.RawByte(']')
 			}
-			out.RawByte(']')
 		}
 	}
 	out.RawByte('}')
@@ -1008,23 +1032,31 @@ func easyjson6601e8cdDecodeGithubComIsuconIsucon10QualifyIsuumoTypes10(in *jlexe
 				in.Skip()
 				out.Chairs = nil
 			} else {
-				in.Delim('[')
 				if out.Chairs == nil {
-					if !in.IsDelim(']') {
-						out.Chairs = make([]Chair, 0, 0)
-					} else {
-						out.Chairs = []Chair{}
-					}
+					out.Chairs = new([]Chair)
+				}
+				if in.IsNull() {
+					in.Skip()
+					*out.Chairs = nil
 				} else {
-					out.Chairs = (out.Chairs)[:0]
+					in.Delim('[')
+					if *out.Chairs == nil {
+						if !in.IsDelim(']') {
+							*out.Chairs = make([]Chair, 0, 0)
+						} else {
+							*out.Chairs = []Chair{}
+						}
+					} else {
+						*out.Chairs = (*out.Chairs)[:0]
+					}
+					for !in.IsDelim(']') {
+						var v16 Chair
+						(v16).UnmarshalEasyJSON(in)
+						*out.Chairs = append(*out.Chairs, v16)
+						in.WantComma()
+					}
+					in.Delim(']')
 				}
-				for !in.IsDelim(']') {
-					var v16 Chair
-					(v16).UnmarshalEasyJSON(in)
-					out.Chairs = append(out.Chairs, v16)
-					in.WantComma()
-				}
-				in.Delim(']')
 			}
 		default:
 			in.SkipRecursive()
@@ -1048,17 +1080,21 @@ func easyjson6601e8cdEncodeGithubComIsuconIsucon10QualifyIsuumoTypes10(out *jwri
 	{
 		const prefix string = ",\"chairs\":"
 		out.RawString(prefix)
-		if in.Chairs == nil && (out.Flags&jwriter.NilSliceAsEmpty) == 0 {
+		if in.Chairs == nil {
 			out.RawString("null")
 		} else {
-			out.RawByte('[')
-			for v17, v18 := range in.Chairs {
-				if v17 > 0 {
-					out.RawByte(',')
+			if *in.Chairs == nil && (out.Flags&jwriter.NilSliceAsEmpty) == 0 {
+				out.RawString("null")
+			} else {
+				out.RawByte('[')
+				for v17, v18 := range *in.Chairs {
+					if v17 > 0 {
+						out.RawByte(',')
+					}
+					(v18).MarshalEasyJSON(out)
 				}
-				(v18).MarshalEasyJSON(out)
+				out.RawByte(']')
 			}
-			out.RawByte(']')
 		}
 	}
 	out.RawByte('}')
@@ -1219,23 +1255,31 @@ func easyjson6601e8cdDecodeGithubComIsuconIsucon10QualifyIsuumoTypes12(in *jlexe
 				in.Skip()
 				out.Chairs = nil
 			} else {
-				in.Delim('[')
 				if out.Chairs == nil {
-					if !in.IsDelim(']') {
-						out.Chairs = make([]Chair, 0, 0)
-					} else {
-						out.Chairs = []Chair{}
-					}
+					out.Chairs = new([]Chair)
+				}
+				if in.IsNull() {
+					in.Skip()
+					*out.Chairs = nil
 				} else {
-					out.Chairs = (out.Chairs)[:0]
+					in.Delim('[')
+					if *out.Chairs == nil {
+						if !in.IsDelim(']') {
+							*out.Chairs = make([]Chair, 0, 0)
+						} else {
+							*out.Chairs = []Chair{}
+						}
+					} else {
+						*out.Chairs = (*out.Chairs)[:0]
+					}
+					for !in.IsDelim(']') {
+						var v19 Chair
+						(v19).UnmarshalEasyJSON(in)
+						*out.Chairs = append(*out.Chairs, v19)
+						in.WantComma()
+					}
+					in.Delim(']')
 				}
-				for !in.IsDelim(']') {
-					var v19 Chair
-					(v19).UnmarshalEasyJSON(in)
-					out.Chairs = append(out.Chairs, v19)
-					in.WantComma()
-				}
-				in.Delim(']')
 			}
 		default:
 			in.SkipRecursive()
@@ -1254,17 +1298,21 @@ func easyjson6601e8cdEncodeGithubComIsuconIsucon10QualifyIsuumoTypes12(out *jwri
 	{
 		const prefix string = ",\"chairs\":"
 		out.RawString(prefix[1:])
-		if in.Chairs == nil && (out.Flags&jwriter.NilSliceAsEmpty) == 0 {
+		if in.Chairs == nil {
 			out.RawString("null")
 		} else {
-			out.RawByte('[')
-			for v20, v21 := range in.Chairs {
-				if v20 > 0 {
-					out.RawByte(',')
+			if *in.Chairs == nil && (out.Flags&jwriter.NilSliceAsEmpty) == 0 {
+				out.RawString("null")
+			} else {
+				out.RawByte('[')
+				for v20, v21 := range *in.Chairs {
+					if v20 > 0 {
+						out.RawByte(',')
+					}
+					(v21).MarshalEasyJSON(out)
 				}
-				(v21).MarshalEasyJSON(out)
+				out.RawByte(']')
 			}
-			out.RawByte(']')
 		}
 	}
 	out.RawByte('}')

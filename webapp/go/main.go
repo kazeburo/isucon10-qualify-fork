@@ -43,6 +43,20 @@ var estateCache = NewSC()
 var estateObjCache = NewIC()
 var sfGroup singleflight.Group
 
+var estatePool = sync.Pool{
+	New: func() interface{} {
+		s := make([]types.Estate, 0, 50)
+		return &s
+	},
+}
+
+var chairPool = sync.Pool{
+	New: func() interface{} {
+		s := make([]types.Chair, 0, 50)
+		return &s
+	},
+}
+
 type MySQLConnectionEnv struct {
 	Host     string
 	Port     string
@@ -490,14 +504,12 @@ func postChair(c *fiber.Ctx) error {
 	return c.SendStatus(fiber.StatusCreated)
 }
 
-func applyChairs(ids []int64) []types.Chair {
-	res, _ := chairObjCache.GetMulti(ids)
-	return res
+func applyChairs(ids []int64, arr *[]types.Chair) {
+	chairObjCache.GetMulti(ids, arr)
 }
 
-func applyEstates(ids []int64) []types.Estate {
-	res, _ := estateObjCache.GetMulti(ids)
-	return res
+func applyEstates(ids []int64, arr *[]types.Estate) {
+	estateObjCache.GetMulti(ids, arr)
 }
 
 func JSONBlob(c *fiber.Ctx, status int, body []byte) error {
@@ -617,7 +629,7 @@ func searchChairs(c *fiber.Ctx) error {
 	err = db.Select(&ids, searchQuery+searchCondition+limitOffset, paramsQ...)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return json.NewEncoder(c.Type("application/json").Status(fiber.StatusOK)).Encode(types.ChairSearchResponse{Count: 0, Chairs: []types.Chair{}})
+			return json.NewEncoder(c.Type("application/json").Status(fiber.StatusOK)).Encode(types.ChairSearchResponse{Count: 0, Chairs: &[]types.Chair{}})
 		}
 		log.Printf("searchChairs DB execution error : %v", err)
 		return c.SendStatus(fiber.StatusInternalServerError)
@@ -629,7 +641,10 @@ func searchChairs(c *fiber.Ctx) error {
 		return c.SendStatus(fiber.StatusInternalServerError)
 	}
 
-	res.Chairs = applyChairs(ids)
+	arr := chairPool.Get().(*[]types.Chair)
+	applyChairs(ids, arr)
+	defer chairPool.Put(arr)
+	res.Chairs = arr
 	b, _ := res.MarshalJSON()
 	chairCache.Set(qs, b)
 
@@ -674,8 +689,9 @@ func buyChair(c *fiber.Ctx) error {
 		e.Stock = e.Stock - 1
 		chairObjCache.Set(e.ID, e)
 	}
-	b := makeLowPricedChair()
-	chairCache.FlushWithNew("getLowPricedChair", b)
+	//b := makeLowPricedChair()
+	//chairCache.FlushWithNew("getLowPricedChair", b)
+	chairCache.Flush()
 
 	return c.SendStatus(fiber.StatusOK)
 }
@@ -696,7 +712,10 @@ func makeLowPricedChair() []byte {
 		log.Printf("getLowPricedChair DB execution error : %v", err)
 		return nil
 	}
-	b, _ := types.ChairListResponse{Chairs: applyChairs(ids)}.MarshalJSON()
+	arr := chairPool.Get().(*[]types.Chair)
+	applyChairs(ids, arr)
+	defer chairPool.Put(arr)
+	b, _ := types.ChairListResponse{Chairs: arr}.MarshalJSON()
 	return b
 }
 
@@ -930,7 +949,7 @@ func searchEstates(c *fiber.Ctx) error {
 	err = db.Select(&ids, searchQuery+searchCondition+limitOffset, paramsQ...)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return json.NewEncoder(c.Type("application/json").Status(fiber.StatusOK)).Encode(types.EstateSearchResponse{Count: 0, Estates: []types.Estate{}})
+			return json.NewEncoder(c.Type("application/json").Status(fiber.StatusOK)).Encode(types.EstateSearchResponse{Count: 0, Estates: &[]types.Estate{}})
 		}
 		log.Printf("searchEstates DB execution error : %v", err)
 		return c.SendStatus(fiber.StatusInternalServerError)
@@ -942,7 +961,10 @@ func searchEstates(c *fiber.Ctx) error {
 		return c.SendStatus(fiber.StatusInternalServerError)
 	}
 
-	res.Estates = applyEstates(ids)
+	arr := estatePool.Get().(*[]types.Estate)
+	applyEstates(ids, arr)
+	defer estatePool.Put(arr)
+	res.Estates = arr
 	b, _ := res.MarshalJSON()
 	estateCache.Set(qs, b)
 
@@ -967,7 +989,10 @@ func getLowPricedEstate(c *fiber.Ctx) error {
 			return nil, err
 		}
 
-		b, _ := types.EstateListResponse{Estates: applyEstates(ids)}.MarshalJSON()
+		arr := estatePool.Get().(*[]types.Estate)
+		applyEstates(ids, arr)
+		defer estatePool.Put(arr)
+		b, _ := types.EstateListResponse{Estates: arr}.MarshalJSON()
 		estateCache.Set("getLowPricedEstate", b)
 
 		return b, nil
@@ -1010,13 +1035,16 @@ func searchRecommendedEstateWithChair(c *fiber.Ctx) error {
 	err = db.Select(&ids, query, minLen, midLen, midLen, minLen, Limit)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return json.NewEncoder(c.Type("application/json").Status(fiber.StatusOK)).Encode(types.EstateListResponse{[]types.Estate{}})
+			return json.NewEncoder(c.Type("application/json").Status(fiber.StatusOK)).Encode(types.EstateListResponse{&[]types.Estate{}})
 		}
 		log.Printf("Database execution error : %v", err)
 		return c.SendStatus(fiber.StatusInternalServerError)
 	}
 
-	b, _ := types.EstateListResponse{Estates: applyEstates(ids)}.MarshalJSON()
+	arr := estatePool.Get().(*[]types.Estate)
+	applyEstates(ids, arr)
+	defer estatePool.Put(arr)
+	b, _ := types.EstateListResponse{Estates: arr}.MarshalJSON()
 	estateCache.Set("recom"+c.Params("id"), b)
 
 	return JSONBlob(c, fiber.StatusOK, b)
@@ -1040,8 +1068,11 @@ func searchEstateNazotte(c *fiber.Ctx) error {
 	err = db.Select(&ids, query)
 
 	var re types.EstateSearchResponse
-	re.Estates = applyEstates(ids)
-	re.Count = int64(len(re.Estates))
+	arr := estatePool.Get().(*[]types.Estate)
+	applyEstates(ids, arr)
+	defer estatePool.Put(arr)
+	re.Estates = arr
+	re.Count = int64(len(ids))
 
 	s := bytesPool.Get().([]byte)
 	defer bytesPool.Put(s)
