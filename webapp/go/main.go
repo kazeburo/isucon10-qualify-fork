@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"database/sql"
 	"encoding/csv"
-	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -17,13 +16,13 @@ import (
 	"sync"
 	"unsafe"
 
+	json "github.com/goccy/go-json"
+
 	"github.com/isucon/isucon10-qualify/isuumo/types"
-	"github.com/mailru/easyjson/jwriter"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/gofiber/fiber/v2"
 	"github.com/jmoiron/sqlx"
-	"github.com/niubaoshu/gotiny"
 	"golang.org/x/sync/singleflight"
 )
 
@@ -158,7 +157,7 @@ func init() {
 		os.Exit(1)
 	}
 	json.Unmarshal(jsonText, &chairSearchCondition)
-	chairSearchConditionJSON, _ = chairSearchCondition.MarshalJSON()
+	chairSearchConditionJSON, _ = json.Marshal(chairSearchCondition)
 
 	jsonText, err = ioutil.ReadFile("../fixture/estate_condition.json")
 	if err != nil {
@@ -166,7 +165,7 @@ func init() {
 		os.Exit(1)
 	}
 	json.Unmarshal(jsonText, &estateSearchCondition)
-	estateSearchConditionJSON, _ = estateSearchCondition.MarshalJSON()
+	estateSearchConditionJSON, _ = json.Marshal(estateSearchCondition)
 }
 
 //var botUA = []*regexp.Regexp{
@@ -390,11 +389,8 @@ func getChairDetail(c *fiber.Ctx) error {
 		if e.Stock <= 0 {
 			return c.SendStatus(fiber.StatusNotFound)
 		}
-		s := bytesPool.Get().([]byte)
-		defer bytesPool.Put(s)
-		w := jwriter.Writer{}
-		e.MarshalEasyJSON(&w)
-		return c.Type("application/json").Status(fiber.StatusOK).Send(w.Buffer.BuildBytes(s))
+		b, _ := json.Marshal(e)
+		return c.Type("application/json").Status(fiber.StatusOK).Send(b)
 	}
 
 	chair := types.Chair{}
@@ -413,11 +409,8 @@ func getChairDetail(c *fiber.Ctx) error {
 		return c.SendStatus(fiber.StatusNotFound)
 	}
 
-	s := bytesPool.Get().([]byte)
-	defer bytesPool.Put(s)
-	w := jwriter.Writer{}
-	chair.MarshalEasyJSON(&w)
-	return c.Type("application/json").Status(fiber.StatusOK).Send(w.Buffer.BuildBytes(s))
+	b, _ := json.Marshal(chair)
+	return c.Type("application/json").Status(fiber.StatusOK).Send(b)
 }
 
 func postChair(c *fiber.Ctx) error {
@@ -605,7 +598,8 @@ func searchChairs(c *fiber.Ctx) error {
 	limitOffset := " ORDER BY popularity DESC, id ASC LIMIT ? OFFSET ?"
 	//log.Printf("searchCondition: %s", searchCondition)
 	var res types.ChairSearchResponse
-	countKey := searchCondition + UnsafeString(gotiny.Marshal(&params))
+	ck, _ := json.Marshal(params)
+	countKey := searchCondition + UnsafeString(ck)
 	r, found := chairCache.Get(countKey)
 	if found {
 		//log.Printf("Hit %s", countKey)
@@ -629,7 +623,7 @@ func searchChairs(c *fiber.Ctx) error {
 	err = db.Select(&ids, searchQuery+searchCondition+limitOffset, paramsQ...)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return json.NewEncoder(c.Type("application/json").Status(fiber.StatusOK)).Encode(types.ChairSearchResponse{Count: 0, Chairs: &[]types.Chair{}})
+			return json.NewEncoder(c.Type("application/json").Status(fiber.StatusOK)).Encode(types.ChairSearchResponse{Count: 0, Chairs: []types.Chair{}})
 		}
 		log.Printf("searchChairs DB execution error : %v", err)
 		return c.SendStatus(fiber.StatusInternalServerError)
@@ -644,8 +638,8 @@ func searchChairs(c *fiber.Ctx) error {
 	arr := chairPool.Get().(*[]types.Chair)
 	applyChairs(ids, arr)
 	defer chairPool.Put(arr)
-	res.Chairs = arr
-	b, _ := res.MarshalJSON()
+	res.Chairs = *arr
+	b, _ := json.Marshal(res)
 	chairCache.Set(qs, b)
 
 	return JSONBlob(c, fiber.StatusOK, b)
@@ -715,7 +709,7 @@ func makeLowPricedChair() []byte {
 	arr := chairPool.Get().(*[]types.Chair)
 	applyChairs(ids, arr)
 	defer chairPool.Put(arr)
-	b, _ := types.ChairListResponse{Chairs: arr}.MarshalJSON()
+	b, _ := json.Marshal(types.ChairListResponse{Chairs: *arr})
 	return b
 }
 
@@ -741,12 +735,9 @@ func getEstateDetail(c *fiber.Ctx) error {
 		return c.SendStatus(fiber.StatusBadRequest)
 	}
 
-	if cacheEs, ok := estateObjCache.Get(int64(id)); ok {
-		s := bytesPool.Get().([]byte)
-		defer bytesPool.Put(s)
-		w := jwriter.Writer{}
-		cacheEs.MarshalEasyJSON(&w)
-		return c.Type("application/json").Status(fiber.StatusOK).Send(w.Buffer.BuildBytes(s))
+	if e, ok := estateObjCache.Get(int64(id)); ok {
+		b, _ := json.Marshal(e)
+		return c.Type("application/json").Status(fiber.StatusOK).Send(b)
 	}
 
 	var estate types.Estate
@@ -759,11 +750,8 @@ func getEstateDetail(c *fiber.Ctx) error {
 		log.Printf("Database Execution error : %v", err)
 		return c.SendStatus(fiber.StatusInternalServerError)
 	}
-	s := bytesPool.Get().([]byte)
-	defer bytesPool.Put(s)
-	w := jwriter.Writer{}
-	estate.MarshalEasyJSON(&w)
-	return c.Type("application/json").Status(fiber.StatusOK).Send(w.Buffer.BuildBytes(s))
+	b, _ := json.Marshal(estate)
+	return c.Type("application/json").Status(fiber.StatusOK).Send(b)
 }
 
 func getRange(cond types.RangeCondition, rangeID string) (*types.Range, error) {
@@ -924,7 +912,8 @@ func searchEstates(c *fiber.Ctx) error {
 	limitOffset := " ORDER BY popularity DESC, id ASC LIMIT ? OFFSET ?"
 	//fmt.Printf("%s\n", searchCondition)
 	var res types.EstateSearchResponse
-	countKey := searchCondition + UnsafeString(gotiny.Marshal(&params))
+	ck, _ := json.Marshal(params)
+	countKey := searchCondition + UnsafeString(ck)
 	r, found := estateCache.Get(countKey)
 	if found {
 		//log.Printf("Hit %s", countKey)
@@ -949,7 +938,7 @@ func searchEstates(c *fiber.Ctx) error {
 	err = db.Select(&ids, searchQuery+searchCondition+limitOffset, paramsQ...)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return json.NewEncoder(c.Type("application/json").Status(fiber.StatusOK)).Encode(types.EstateSearchResponse{Count: 0, Estates: &[]types.Estate{}})
+			return json.NewEncoder(c.Type("application/json").Status(fiber.StatusOK)).Encode(types.EstateSearchResponse{Count: 0, Estates: []types.Estate{}})
 		}
 		log.Printf("searchEstates DB execution error : %v", err)
 		return c.SendStatus(fiber.StatusInternalServerError)
@@ -964,8 +953,8 @@ func searchEstates(c *fiber.Ctx) error {
 	arr := estatePool.Get().(*[]types.Estate)
 	applyEstates(ids, arr)
 	defer estatePool.Put(arr)
-	res.Estates = arr
-	b, _ := res.MarshalJSON()
+	res.Estates = *arr
+	b, _ := json.Marshal(res)
 	estateCache.Set(qs, b)
 
 	return JSONBlob(c, fiber.StatusOK, b)
@@ -992,7 +981,7 @@ func getLowPricedEstate(c *fiber.Ctx) error {
 		arr := estatePool.Get().(*[]types.Estate)
 		applyEstates(ids, arr)
 		defer estatePool.Put(arr)
-		b, _ := types.EstateListResponse{Estates: arr}.MarshalJSON()
+		b, _ := json.Marshal(types.EstateListResponse{Estates: *arr})
 		estateCache.Set("getLowPricedEstate", b)
 
 		return b, nil
@@ -1035,7 +1024,7 @@ func searchRecommendedEstateWithChair(c *fiber.Ctx) error {
 	err = db.Select(&ids, query, minLen, midLen, midLen, minLen, Limit)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return json.NewEncoder(c.Type("application/json").Status(fiber.StatusOK)).Encode(types.EstateListResponse{&[]types.Estate{}})
+			return json.NewEncoder(c.Type("application/json").Status(fiber.StatusOK)).Encode(types.EstateListResponse{[]types.Estate{}})
 		}
 		log.Printf("Database execution error : %v", err)
 		return c.SendStatus(fiber.StatusInternalServerError)
@@ -1044,7 +1033,7 @@ func searchRecommendedEstateWithChair(c *fiber.Ctx) error {
 	arr := estatePool.Get().(*[]types.Estate)
 	applyEstates(ids, arr)
 	defer estatePool.Put(arr)
-	b, _ := types.EstateListResponse{Estates: arr}.MarshalJSON()
+	b, _ := json.Marshal(types.EstateListResponse{Estates: *arr})
 	estateCache.Set("recom"+c.Params("id"), b)
 
 	return JSONBlob(c, fiber.StatusOK, b)
@@ -1071,14 +1060,11 @@ func searchEstateNazotte(c *fiber.Ctx) error {
 	arr := estatePool.Get().(*[]types.Estate)
 	applyEstates(ids, arr)
 	defer estatePool.Put(arr)
-	re.Estates = arr
+	re.Estates = *arr
 	re.Count = int64(len(ids))
 
-	s := bytesPool.Get().([]byte)
-	defer bytesPool.Put(s)
-	w := jwriter.Writer{}
-	re.MarshalEasyJSON(&w)
-	return c.Type("application/json").Status(fiber.StatusOK).Send(w.Buffer.BuildBytes(s))
+	b, _ := json.Marshal(re)
+	return c.Type("application/json").Status(fiber.StatusOK).Send(b)
 }
 
 func postEstateRequestDocument(c *fiber.Ctx) error {
