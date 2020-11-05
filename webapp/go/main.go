@@ -56,6 +56,30 @@ var chairPool = sync.Pool{
 	},
 }
 
+type BB struct {
+	B []byte
+}
+
+func (b *BB) Write(p []byte) (int, error) {
+	b.B = append(b.B, p...)
+	return len(p), nil
+}
+
+func (b *BB) Reset() {
+	b.B = b.B[:0]
+}
+
+func (b *BB) Bytes() []byte {
+	return b.B
+}
+
+var BBPool = sync.Pool{
+	New: func() interface{} {
+		//log.Printf("new(BB)")
+		return new(BB)
+	},
+}
+
 type MySQLConnectionEnv struct {
 	Host     string
 	Port     string
@@ -166,6 +190,30 @@ func init() {
 	}
 	json.Unmarshal(jsonText, &estateSearchCondition)
 	estateSearchConditionJSON, _ = json.Marshal(estateSearchCondition)
+
+	/*tmp := []byte{}
+	for i := 0; i < 1024; i++ {
+		tmp = append(tmp, 'x', 'x', 'x', 'x', 'x', 'x', 'x', 'x', 'x', 'x', 'x', 'x', 'x', 'x', 'x', 'x')
+	}*/
+
+	/*warmup := []*BB{}
+	for i := 0; i < 50000; i++ {
+		wu := BBPool.Get().(*BB)
+		wu.Write(tmp)
+		warmup = append(warmup, wu)
+
+	}
+	for _, wu := range warmup {
+		wu.Reset()
+		BBPool.Put(wu)
+	}
+	warmup := []*json.Encoder{}
+	for i := 0; i < 10000; i++ {
+		warmup = append(warmup, json.NewEncoder(nil))
+	}
+	for _, wu := range warmup {
+		wu.Release()
+	}*/
 }
 
 //var botUA = []*regexp.Regexp{
@@ -184,7 +232,8 @@ regexp.MustCompile(`Isupider(-image)?\+`),*/
 
 // Banbot middleware ban bot
 var botUAb = [][]byte{
-	[]byte("ISUCONbot-Image/"),
+	[]byte("ISUCONbot"),
+	//	[]byte("ISUCONbot-Image/"),
 	[]byte("Mediapartners-ISUCON"),
 	[]byte("ISUCONCoffee"),
 	[]byte("ISUCONFeedSeeker"),
@@ -269,7 +318,8 @@ func main() {
 	estateCache.Flush()
 
 	// Fiber instance
-	e := fiber.New(fiber.Config{WriteBufferSize: 16 * 1024})
+	// WriteBufferSize: 4 * 1024
+	e := fiber.New(fiber.Config{})
 
 	// Middleware
 	e.Use(Banbot)
@@ -372,12 +422,6 @@ func initialize(c *fiber.Ctx) error {
 	})
 }
 
-var bytesPool = sync.Pool{
-	New: func() interface{} {
-		return make([]byte, 0, 16*1024)
-	},
-}
-
 func getChairDetail(c *fiber.Ctx) error {
 	id, err := strconv.Atoi(c.Params("id"))
 	if err != nil {
@@ -389,8 +433,11 @@ func getChairDetail(c *fiber.Ctx) error {
 		if e.Stock <= 0 {
 			return c.SendStatus(fiber.StatusNotFound)
 		}
-		b, _ := json.Marshal(e)
-		return c.Type("application/json").Status(fiber.StatusOK).Send(b)
+		enc := json.NewEncoder(c.Type("application/json").Status(fiber.StatusOK))
+		defer enc.Release()
+		return enc.Encode(e)
+		//b, _ := json.Marshal(e)
+		//return c.Type("application/json").Status(fiber.StatusOK).Send(b)
 	}
 
 	chair := types.Chair{}
@@ -409,8 +456,11 @@ func getChairDetail(c *fiber.Ctx) error {
 		return c.SendStatus(fiber.StatusNotFound)
 	}
 
-	b, _ := json.Marshal(chair)
-	return c.Type("application/json").Status(fiber.StatusOK).Send(b)
+	enc := json.NewEncoder(c.Type("application/json").Status(fiber.StatusOK))
+	defer enc.Release()
+	return enc.Encode(chair)
+	//b, _ := json.Marshal(chair)
+	//return c.Type("application/json").Status(fiber.StatusOK).Send(b)
 }
 
 func postChair(c *fiber.Ctx) error {
@@ -639,8 +689,12 @@ func searchChairs(c *fiber.Ctx) error {
 	applyChairs(ids, arr)
 	defer chairPool.Put(arr)
 	res.Chairs = *arr
-	b, _ := json.Marshal(res)
-	chairCache.Set(qs, b)
+
+	enc := json.NewEncoder(nil)
+	b, _ := enc.EncodeWithOptionRawBuf(res)
+	chairCache.SetWithClear(qs, b, func() {
+		enc.Release()
+	})
 
 	return JSONBlob(c, fiber.StatusOK, b)
 }
@@ -736,8 +790,9 @@ func getEstateDetail(c *fiber.Ctx) error {
 	}
 
 	if e, ok := estateObjCache.Get(int64(id)); ok {
-		b, _ := json.Marshal(e)
-		return c.Type("application/json").Status(fiber.StatusOK).Send(b)
+		enc := json.NewEncoder(c.Type("application/json").Status(fiber.StatusOK))
+		defer enc.Release()
+		return enc.Encode(e)
 	}
 
 	var estate types.Estate
@@ -750,8 +805,9 @@ func getEstateDetail(c *fiber.Ctx) error {
 		log.Printf("Database Execution error : %v", err)
 		return c.SendStatus(fiber.StatusInternalServerError)
 	}
-	b, _ := json.Marshal(estate)
-	return c.Type("application/json").Status(fiber.StatusOK).Send(b)
+	enc := json.NewEncoder(c.Type("application/json").Status(fiber.StatusOK))
+	defer enc.Release()
+	return enc.Encode(estate)
 }
 
 func getRange(cond types.RangeCondition, rangeID string) (*types.Range, error) {
@@ -938,7 +994,7 @@ func searchEstates(c *fiber.Ctx) error {
 	err = db.Select(&ids, searchQuery+searchCondition+limitOffset, paramsQ...)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return json.NewEncoder(c.Type("application/json").Status(fiber.StatusOK)).Encode(types.EstateSearchResponse{Count: 0, Estates: []types.Estate{}})
+			return c.JSON(types.EstateSearchResponse{Count: 0, Estates: []types.Estate{}})
 		}
 		log.Printf("searchEstates DB execution error : %v", err)
 		return c.SendStatus(fiber.StatusInternalServerError)
@@ -954,8 +1010,12 @@ func searchEstates(c *fiber.Ctx) error {
 	applyEstates(ids, arr)
 	defer estatePool.Put(arr)
 	res.Estates = *arr
-	b, _ := json.Marshal(res)
-	estateCache.Set(qs, b)
+
+	enc := json.NewEncoder(nil)
+	b, _ := enc.EncodeWithOptionRawBuf(res)
+	estateCache.SetWithClear(qs, b, func() {
+		enc.Release()
+	})
 
 	return JSONBlob(c, fiber.StatusOK, b)
 }
@@ -1033,8 +1093,12 @@ func searchRecommendedEstateWithChair(c *fiber.Ctx) error {
 	arr := estatePool.Get().(*[]types.Estate)
 	applyEstates(ids, arr)
 	defer estatePool.Put(arr)
-	b, _ := json.Marshal(types.EstateListResponse{Estates: *arr})
-	estateCache.Set("recom"+c.Params("id"), b)
+
+	enc := json.NewEncoder(nil)
+	b, _ := enc.EncodeWithOptionRawBuf(types.EstateListResponse{Estates: *arr})
+	estateCache.SetWithClear("recom"+c.Params("id"), b, func() {
+		enc.Release()
+	})
 
 	return JSONBlob(c, fiber.StatusOK, b)
 }
@@ -1063,8 +1127,11 @@ func searchEstateNazotte(c *fiber.Ctx) error {
 	re.Estates = *arr
 	re.Count = int64(len(ids))
 
-	b, _ := json.Marshal(re)
-	return c.Type("application/json").Status(fiber.StatusOK).Send(b)
+	enc := json.NewEncoder(c.Type("application/json").Status(fiber.StatusOK))
+	defer enc.Release()
+	return enc.Encode(re)
+	//b, _ := json.Marshal(re)
+	//return c.Type("application/json").Status(fiber.StatusOK).Send(b)
 }
 
 func postEstateRequestDocument(c *fiber.Ctx) error {

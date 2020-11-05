@@ -8,6 +8,7 @@ import (
 
 type SCache struct {
 	ma map[string]interface{}
+	cf []func()
 	mu sync.RWMutex
 }
 
@@ -23,7 +24,8 @@ type ChCache struct {
 
 func NewSC() *SCache {
 	ma := make(map[string]interface{})
-	return &SCache{ma: ma}
+	cf := []func(){}
+	return &SCache{ma: ma, cf: cf}
 }
 
 func (c *SCache) Get(k string) (interface{}, bool) {
@@ -39,9 +41,21 @@ func (c *SCache) Set(k string, v interface{}) {
 	c.ma[k] = v
 }
 
+func (c *SCache) SetWithClear(k string, v interface{}, f func()) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.ma[k] = v
+	c.cf = append(c.cf, f)
+}
+
 func (c *SCache) Flush() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	//log.Printf("reset: %d", len(c.cf))
+	for _, f := range c.cf {
+		f()
+	}
+	c.cf = []func(){}
 	c.ma = make(map[string]interface{})
 }
 
@@ -51,6 +65,10 @@ func (c *SCache) FlushWithNew(k string, v interface{}) {
 	n := make(map[string]interface{})
 	n[k] = v
 	c.ma = n
+	for _, f := range c.cf {
+		f()
+	}
+	c.cf = []func(){}
 }
 
 func NewCC() *ChCache {

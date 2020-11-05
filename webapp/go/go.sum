@@ -137,6 +137,14 @@ github.com/jmoiron/sqlx v1.2.0/go.mod h1:1FEQNm3xlJgrMD+FBdI9+xvCksHtbpVBBw5dYhB
 github.com/jstemmer/go-junit-report v0.0.0-20190106144839-af01ea7f8024/go.mod h1:6v2b51hI/fHJwM22ozAgKL4VKDeJcHhJFhtBdhmNjmU=
 github.com/jstemmer/go-junit-report v0.9.1 h1:6QPYqodiu3GuPL+7mfx+NwDdp2eTkp9IfEUpgAwUN0o=
 github.com/jstemmer/go-junit-report v0.9.1/go.mod h1:Brl9GWCQeLvo8nXZwPNNblvFj/XSXhF0NWZEnDohbsk=
+github.com/kazeburo/go-json v0.1.14-0.20201105014857-d8ccf4198924 h1:UeE7cWrtTL6qWrWT4WYr55qj54qrvniX6On6Vpta/ac=
+github.com/kazeburo/go-json v0.1.14-0.20201105014857-d8ccf4198924/go.mod h1:6MelG93GURQebXPDq3khkgXZkazVtN9CRI+MGFi0w8I=
+github.com/kazeburo/go-json v0.1.14-0.20201105021159-a1d7e4612a3b h1:HRnqpdToxPlSGZkTFgMoeehC0Wn6oaCmtS40/CzML6Q=
+github.com/kazeburo/go-json v0.1.14-0.20201105021159-a1d7e4612a3b/go.mod h1:6MelG93GURQebXPDq3khkgXZkazVtN9CRI+MGFi0w8I=
+github.com/kazeburo/go-json v0.1.14-0.20201105072926-8e3735198954 h1:F+hWTueCZTvBHtYE+C45wR7c4Xw+I3w5esy0Remik2E=
+github.com/kazeburo/go-json v0.1.14-0.20201105072926-8e3735198954/go.mod h1:6MelG93GURQebXPDq3khkgXZkazVtN9CRI+MGFi0w8I=
+github.com/kazeburo/go-json v0.1.14-0.20201105082108-a6ca3e9f316d h1:+JMmialnkDKVshMVhuUBOifGBk5h5vLNkleyrL5OimA=
+github.com/kazeburo/go-json v0.1.14-0.20201105082108-a6ca3e9f316d/go.mod h1:6MelG93GURQebXPDq3khkgXZkazVtN9CRI+MGFi0w8I=
 github.com/kisielk/gotool v1.0.0/go.mod h1:XhKaO+MFFWcvkIS/tQcRk01m1F5IRFswLeQ+oQHNcck=
 github.com/klauspost/compress v1.10.7 h1:7rix8v8GpI3ZBb0nSozFRgbtXKv+hOe+qfEpZqybrAg=
 github.com/klauspost/compress v1.10.7/go.mod h1:aoV0uJVorq1K+umq18yTdKaF57EivdYsUV+/s2qKfXs=
