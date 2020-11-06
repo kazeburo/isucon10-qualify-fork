@@ -5,11 +5,13 @@ import (
 	"database/sql"
 	"encoding/csv"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -37,24 +39,10 @@ var chairSearchConditionJSON []byte
 var estateSearchConditionJSON []byte
 
 var chairCache = NewSC()
-var chairObjCache = NewCC()
+var chairObjCache = NewBC()
 var estateCache = NewSC()
-var estateObjCache = NewIC()
+var estateObjCache = NewBC()
 var sfGroup singleflight.Group
-
-var estatePool = sync.Pool{
-	New: func() interface{} {
-		s := make([]types.Estate, 0, 50)
-		return &s
-	},
-}
-
-var chairPool = sync.Pool{
-	New: func() interface{} {
-		s := make([]types.Chair, 0, 50)
-		return &s
-	},
-}
 
 type BB struct {
 	B []byte
@@ -63,6 +51,10 @@ type BB struct {
 func (b *BB) Write(p []byte) (int, error) {
 	b.B = append(b.B, p...)
 	return len(p), nil
+}
+
+func (b *BB) WriteString(s string) (int, error) {
+	return b.Write(unsafeGetBytes(s))
 }
 
 func (b *BB) Reset() {
@@ -76,7 +68,8 @@ func (b *BB) Bytes() []byte {
 var BBPool = sync.Pool{
 	New: func() interface{} {
 		//log.Printf("new(BB)")
-		return new(BB)
+		b := make([]byte, 0, 16*1024)
+		return &BB{b}
 	},
 }
 
@@ -170,8 +163,9 @@ func getEnv(key, defaultValue string) string {
 
 //ConnectDB isuumoデータベースに接続する
 func (mc *MySQLConnectionEnv) ConnectDB() (*sqlx.DB, error) {
-	dsn := fmt.Sprintf("%v:%v@tcp(%v:%v)/%v?interpolateParams=true", mc.User, mc.Password, mc.Host, mc.Port, mc.DBName)
-	return sqlx.Open(tracedDriver("mysql"), dsn)
+	// dsn := fmt.Sprintf("%v:%v@tcp(%v:%v)/%v?interpolateParams=true", mc.User, mc.Password, mc.Host, mc.Port, mc.DBName)
+	dsn := fmt.Sprintf("%v:%v@unix(/tmp/mysql.sock)/%v?interpolateParams=true", mc.User, mc.Password, mc.DBName)
+	return sqlx.Open("mysql", dsn)
 }
 
 func init() {
@@ -190,30 +184,6 @@ func init() {
 	}
 	json.Unmarshal(jsonText, &estateSearchCondition)
 	estateSearchConditionJSON, _ = json.Marshal(estateSearchCondition)
-
-	/*tmp := []byte{}
-	for i := 0; i < 1024; i++ {
-		tmp = append(tmp, 'x', 'x', 'x', 'x', 'x', 'x', 'x', 'x', 'x', 'x', 'x', 'x', 'x', 'x', 'x', 'x')
-	}*/
-
-	/*warmup := []*BB{}
-	for i := 0; i < 50000; i++ {
-		wu := BBPool.Get().(*BB)
-		wu.Write(tmp)
-		warmup = append(warmup, wu)
-
-	}
-	for _, wu := range warmup {
-		wu.Reset()
-		BBPool.Put(wu)
-	}
-	warmup := []*json.Encoder{}
-	for i := 0; i < 10000; i++ {
-		warmup = append(warmup, json.NewEncoder(nil))
-	}
-	for _, wu := range warmup {
-		wu.Release()
-	}*/
 }
 
 //var botUA = []*regexp.Regexp{
@@ -295,11 +265,14 @@ PARENT:
 
 func Banbot(c *fiber.Ctx) error {
 	ua := c.Request().Header.UserAgent()
+	if bytes.Contains(ua, []byte("ISUCON ")) {
+		return c.Next()
+	}
 	uaLower := bytes.ToLower(ua)
 	if bytes.Equal(ua, []byte("/")) {
 		return c.SendStatus(fiber.StatusForbidden)
 	}
-	if bytes.Contains(ua, []byte("isu")) && uaLikeBot(ua) {
+	if uaLikeBot(ua) {
 		return c.SendStatus(fiber.StatusForbidden)
 	}
 	if uaLikeSpider(uaLower, []byte("bot")) ||
@@ -318,8 +291,10 @@ func main() {
 	estateCache.Flush()
 
 	// Fiber instance
-	// WriteBufferSize: 4 * 1024
-	e := fiber.New(fiber.Config{})
+	e := fiber.New(fiber.Config{
+		WriteBufferSize: 16 * 1024,
+		Immutable:       true,
+	})
 
 	// Middleware
 	e.Use(Banbot)
@@ -352,22 +327,24 @@ func main() {
 	if err != nil {
 		log.Fatal("DB connection failed : %v", err)
 	}
-	db.SetMaxOpenConns(25)
-	db.SetMaxIdleConns(25)
+	//	db.SetMaxOpenConns(100)
+	db.SetMaxIdleConns(10000)
 	defer db.Close()
 
 	estateObjCache.Flush()
 	estates := []types.Estate{}
 	_ = db.Select(&estates, `SELECT * FROM estate`)
 	for _, e := range estates {
-		estateObjCache.Set(e.ID, e)
+		b, _ := json.Marshal(e)
+		estateObjCache.Set(e.ID, b)
 	}
 
 	chairObjCache.Flush()
 	chairs := []types.Chair{}
 	_ = db.Select(&chairs, `SELECT * FROM chair`)
 	for _, e := range chairs {
-		chairObjCache.Set(e.ID, e)
+		b, _ := json.Marshal(e)
+		chairObjCache.Set(e.ID, b)
 	}
 
 	// Start server
@@ -407,14 +384,16 @@ func initialize(c *fiber.Ctx) error {
 	estates := []types.Estate{}
 	_ = db.Select(&estates, `SELECT * FROM estate`)
 	for _, e := range estates {
-		estateObjCache.Set(e.ID, e)
+		b, _ := json.Marshal(e)
+		estateObjCache.Set(e.ID, b)
 	}
 
 	chairObjCache.Flush()
 	chairs := []types.Chair{}
 	_ = db.Select(&chairs, `SELECT * FROM chair`)
 	for _, e := range chairs {
-		chairObjCache.Set(e.ID, e)
+		b, _ := json.Marshal(e)
+		chairObjCache.Set(e.ID, b)
 	}
 
 	return json.NewEncoder(c.Type("application/json").Status(fiber.StatusOK)).Encode(types.InitializeResponse{
@@ -430,14 +409,10 @@ func getChairDetail(c *fiber.Ctx) error {
 	}
 
 	if e, ok := chairObjCache.Get(int64(id)); ok {
-		if e.Stock <= 0 {
+		if bytes.Contains(e, []byte(`"stock":0`)) {
 			return c.SendStatus(fiber.StatusNotFound)
 		}
-		enc := json.NewEncoder(c.Type("application/json").Status(fiber.StatusOK))
-		defer enc.Release()
-		return enc.Encode(e)
-		//b, _ := json.Marshal(e)
-		//return c.Type("application/json").Status(fiber.StatusOK).Send(b)
+		return JSONBlob(c, e)
 	}
 
 	chair := types.Chair{}
@@ -455,12 +430,7 @@ func getChairDetail(c *fiber.Ctx) error {
 		log.Printf("requested id's chair is sold out : %v", id)
 		return c.SendStatus(fiber.StatusNotFound)
 	}
-
-	enc := json.NewEncoder(c.Type("application/json").Status(fiber.StatusOK))
-	defer enc.Release()
-	return enc.Encode(chair)
-	//b, _ := json.Marshal(chair)
-	//return c.Type("application/json").Status(fiber.StatusOK).Send(b)
+	return c.JSON(chair)
 }
 
 func postChair(c *fiber.Ctx) error {
@@ -539,90 +509,111 @@ func postChair(c *fiber.Ctx) error {
 	_ = db.Select(&chairs, `SELECT * FROM chair WHERE id > ?`, maxID)
 	// log.Printf("cache set %d", len(estates))
 	for _, e := range chairs {
-		chairObjCache.Set(e.ID, e)
+		b, _ := json.Marshal(e)
+		chairObjCache.Set(e.ID, b)
 	}
-	b := makeLowPricedChair()
-	chairCache.FlushWithNew("getLowPricedChair", b)
+	chairCache.Flush()
 
 	return c.SendStatus(fiber.StatusCreated)
 }
 
-func applyChairs(ids []int64, arr *[]types.Chair) {
-	chairObjCache.GetMulti(ids, arr)
+func writeChairs(w io.Writer, ids []int64) {
+	res, _ := chairObjCache.GetMulti(ids)
+	for i := 0; i < len(res); i++ {
+		w.Write(res[i])
+		if i+1 != len(res) {
+			w.Write([]byte(","))
+		}
+	}
 }
 
-func applyEstates(ids []int64, arr *[]types.Estate) {
-	estateObjCache.GetMulti(ids, arr)
+func writeEstates(w io.Writer, ids []int64) {
+	res, _ := estateObjCache.GetMulti(ids)
+	for i := 0; i < len(res); i++ {
+		w.Write(res[i])
+		if i+1 != len(res) {
+			w.Write([]byte(","))
+		}
+	}
 }
 
-func JSONBlob(c *fiber.Ctx, status int, body []byte) error {
-	return c.Status(status).Type("application/json").Send(body)
+func JSONBlob(c *fiber.Ctx, body []byte) error {
+	c.Set("Content-Type", "application/json")
+	return c.Status(fiber.StatusOK).Send(body)
 }
 
 func searchChairs(c *fiber.Ctx) error {
 	conditions := make([]string, 0, 8)
+	conditionParams := make([]string, 0, 8)
 	params := make([]interface{}, 0, 8)
 
 	qs := UnsafeString(c.Request().URI().QueryString())
 	if r, found := chairCache.Get(qs); found {
-		return JSONBlob(c, fiber.StatusOK, r.([]byte))
+		return JSONBlob(c, r.([]byte))
 	}
 
-	if c.Query("priceRangeId") != "" {
-		chairPrice, err := getRange(chairSearchCondition.Price, c.Query("priceRangeId"))
+	if q := c.Query("priceRangeId"); q != "" {
+		chairPrice, err := getRange(chairSearchCondition.Price, q)
 		if err != nil {
-			log.Printf("priceRangeID invalid, %v : %v", c.Query("priceRangeId"), err)
+			log.Printf("priceRangeID invalid, %v : %v", q, err)
 			return c.SendStatus(fiber.StatusBadRequest)
 		}
 		conditions = append(conditions, "price_range = ?")
 		params = append(params, chairPrice.ID)
+		conditionParams = append(conditionParams, q)
 	}
 
-	if c.Query("heightRangeId") != "" {
-		chairHeight, err := getRange(chairSearchCondition.Height, c.Query("heightRangeId"))
+	if q := c.Query("heightRangeId"); q != "" {
+		chairHeight, err := getRange(chairSearchCondition.Height, q)
 		if err != nil {
-			log.Printf("heightRangeIf invalid, %v : %v", c.Query("heightRangeId"), err)
+			log.Printf("heightRangeIf invalid, %v : %v", q, err)
 			return c.SendStatus(fiber.StatusBadRequest)
 		}
 		conditions = append(conditions, "height_range = ?")
 		params = append(params, chairHeight.ID)
+		conditionParams = append(conditionParams, q)
 	}
 
-	if c.Query("widthRangeId") != "" {
-		chairWidth, err := getRange(chairSearchCondition.Width, c.Query("widthRangeId"))
+	if q := c.Query("widthRangeId"); q != "" {
+		chairWidth, err := getRange(chairSearchCondition.Width, q)
 		if err != nil {
-			log.Printf("widthRangeID invalid, %v : %v", c.Query("widthRangeId"), err)
+			log.Printf("widthRangeID invalid, %v : %v", q, err)
 			return c.SendStatus(fiber.StatusBadRequest)
 		}
 		conditions = append(conditions, "width_range = ?")
 		params = append(params, chairWidth.ID)
+		conditionParams = append(conditionParams, q)
 	}
 
-	if c.Query("depthRangeId") != "" {
-		chairDepth, err := getRange(chairSearchCondition.Depth, c.Query("depthRangeId"))
+	if q := c.Query("depthRangeId"); q != "" {
+		chairDepth, err := getRange(chairSearchCondition.Depth, q)
 		if err != nil {
-			log.Printf("depthRangeId invalid, %v : %v", c.Query("depthRangeId"), err)
+			log.Printf("depthRangeId invalid, %v : %v", q, err)
 			return c.SendStatus(fiber.StatusBadRequest)
 		}
 		conditions = append(conditions, "depth_range = ?")
 		params = append(params, chairDepth.ID)
+		conditionParams = append(conditionParams, q)
 	}
 
-	if c.Query("kind") != "" {
+	if q := c.Query("kind"); q != "" {
 		conditions = append(conditions, "kind = ?")
-		params = append(params, c.Query("kind"))
+		params = append(params, q)
+		conditionParams = append(conditionParams, q)
 	}
 
-	if c.Query("color") != "" {
+	if q := c.Query("color"); q != "" {
 		conditions = append(conditions, "color = ?")
-		params = append(params, c.Query("color"))
+		params = append(params, q)
+		conditionParams = append(conditionParams, q)
 	}
 
-	if c.Query("features") != "" {
-		for _, f := range strings.Split(c.Query("features"), ",") {
+	if q := c.Query("features"); q != "" {
+		for _, f := range strings.Split(q, ",") {
 			conditions = append(conditions, "features LIKE CONCAT('%', ?, '%')")
 			params = append(params, f)
 		}
+		conditionParams = append(conditionParams, q)
 	}
 
 	if len(conditions) == 0 {
@@ -648,8 +639,7 @@ func searchChairs(c *fiber.Ctx) error {
 	limitOffset := " ORDER BY popularity DESC, id ASC LIMIT ? OFFSET ?"
 	//log.Printf("searchCondition: %s", searchCondition)
 	var res types.ChairSearchResponse
-	ck, _ := json.Marshal(params)
-	countKey := searchCondition + UnsafeString(ck)
+	countKey := searchCondition + strings.Join(conditionParams, ",")
 	r, found := chairCache.Get(countKey)
 	if found {
 		//log.Printf("Hit %s", countKey)
@@ -684,19 +674,30 @@ func searchChairs(c *fiber.Ctx) error {
 		log.Printf("searchChairs DB execution error : %v", cntErr)
 		return c.SendStatus(fiber.StatusInternalServerError)
 	}
+	res.IDs = ids
 
-	arr := chairPool.Get().(*[]types.Chair)
-	applyChairs(ids, arr)
-	defer chairPool.Put(arr)
-	res.Chairs = *arr
+	bb := BBPool.Get().(*BB)
+	bb.Write([]byte(`{"count":`))
+	bb.WriteString(strconv.FormatInt(res.Count, 10))
+	bb.Write([]byte(`,"chairs":[`))
+	writeChairs(bb, res.IDs)
+	bb.Write([]byte(`]}`))
 
-	enc := json.NewEncoder(nil)
-	b, _ := enc.EncodeWithOptionRawBuf(res)
-	chairCache.SetWithClear(qs, b, func() {
-		enc.Release()
-	})
+	chairCache.SetWithClear(qs, bb.Bytes(), func() { bb.Reset(); BBPool.Put(bb) })
+	return JSONBlob(c, bb.Bytes())
+}
 
-	return JSONBlob(c, fiber.StatusOK, b)
+var stockDecrReg = regexp.MustCompile(`"stock":(\d+)`)
+
+func unsafeGetBytes(s string) []byte {
+	return *(*[]byte)(unsafe.Pointer(&s))
+}
+
+func stockDecr(b []byte) []byte {
+	parts := stockDecrReg.FindStringSubmatch(UnsafeString(b))
+	i, _ := strconv.Atoi(parts[1])
+	i = i - 1
+	return []byte(`"stock":` + strconv.Itoa(i))
 }
 
 func buyChair(c *fiber.Ctx) error {
@@ -733,53 +734,55 @@ func buyChair(c *fiber.Ctx) error {
 		return c.SendStatus(fiber.StatusNotFound)
 	}
 
-	if e, ok := chairObjCache.Get(int64(id)); ok {
-		e.Stock = e.Stock - 1
-		chairObjCache.Set(e.ID, e)
+	id64 := int64(id)
+	if e, ok := chairObjCache.Get(id64); ok {
+		e = stockDecrReg.ReplaceAllFunc(e, stockDecr)
+		chairObjCache.Set(id64, e)
 	}
-	//b := makeLowPricedChair()
-	//chairCache.FlushWithNew("getLowPricedChair", b)
-	chairCache.Flush()
+	sfGroup.Do("chairCache.Flush", func() (interface{}, error) {
+		chairCache.Flush()
+		return nil, nil
+	})
 
 	return c.SendStatus(fiber.StatusOK)
 }
 
 func getChairSearchCondition(c *fiber.Ctx) error {
-	return JSONBlob(c, fiber.StatusOK, chairSearchConditionJSON)
+	return JSONBlob(c, chairSearchConditionJSON)
 }
 
-func makeLowPricedChair() []byte {
-	ids := make([]int64, 0, 50)
+func makeLowPricedChair() []int64 {
+	ids := make([]int64, 0, Limit)
 	query := `SELECT id FROM chair_stock ORDER BY price ASC, id ASC LIMIT ?`
 	err := db.Select(&ids, query, Limit)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			log.Printf("getLowPricedChair not found")
-			return []byte("[]")
+			return ids
 		}
 		log.Printf("getLowPricedChair DB execution error : %v", err)
 		return nil
 	}
-	arr := chairPool.Get().(*[]types.Chair)
-	applyChairs(ids, arr)
-	defer chairPool.Put(arr)
-	b, _ := json.Marshal(types.ChairListResponse{Chairs: *arr})
-	return b
+	return ids
 }
 
 func getLowPricedChair(c *fiber.Ctx) error {
 	if r, found := chairCache.Get("getLowPricedChair"); found {
-		return JSONBlob(c, fiber.StatusOK, r.([]byte))
+		return JSONBlob(c, r.([]byte))
 	}
 	r, e, _ := sfGroup.Do("getLowPricedChair", func() (interface{}, error) {
-		b := makeLowPricedChair()
-		chairCache.Set("getLowPricedChair", b)
-		return b, nil
+		ids := makeLowPricedChair()
+		bb := BBPool.Get().(*BB)
+		bb.Write([]byte(`{"chairs":[`))
+		writeChairs(bb, ids)
+		bb.Write([]byte(`]}`))
+		chairCache.SetWithClear("getLowPricedChair", bb.Bytes(), func() { bb.Reset(); BBPool.Put(bb) })
+		return bb.Bytes(), nil
 	})
 	if e != nil {
 		return c.SendStatus(fiber.StatusInternalServerError)
 	}
-	return JSONBlob(c, fiber.StatusOK, r.([]byte))
+	return JSONBlob(c, r.([]byte))
 }
 
 func getEstateDetail(c *fiber.Ctx) error {
@@ -790,9 +793,7 @@ func getEstateDetail(c *fiber.Ctx) error {
 	}
 
 	if e, ok := estateObjCache.Get(int64(id)); ok {
-		enc := json.NewEncoder(c.Type("application/json").Status(fiber.StatusOK))
-		defer enc.Release()
-		return enc.Encode(e)
+		return JSONBlob(c, e)
 	}
 
 	var estate types.Estate
@@ -805,9 +806,7 @@ func getEstateDetail(c *fiber.Ctx) error {
 		log.Printf("Database Execution error : %v", err)
 		return c.SendStatus(fiber.StatusInternalServerError)
 	}
-	enc := json.NewEncoder(c.Type("application/json").Status(fiber.StatusOK))
-	defer enc.Release()
-	return enc.Encode(estate)
+	return c.JSON(estate)
 }
 
 func getRange(cond types.RangeCondition, rangeID string) (*types.Range, error) {
@@ -892,8 +891,10 @@ func postEstate(c *fiber.Ctx) error {
 	_ = db.Select(&estates, `SELECT * FROM estate WHERE id > ?`, maxID)
 	// log.Printf("cache set %d", len(estates))
 	for _, e := range estates {
-		estateObjCache.Set(e.ID, e)
+		b, _ := json.Marshal(e)
+		estateObjCache.Set(e.ID, b)
 	}
+	//log.Printf("estateCache.Flush()")
 	estateCache.Flush()
 
 	return c.SendStatus(fiber.StatusCreated)
@@ -901,48 +902,53 @@ func postEstate(c *fiber.Ctx) error {
 
 func searchEstates(c *fiber.Ctx) error {
 	conditions := make([]string, 0)
+	conditionParams := make([]string, 0)
 	params := make([]interface{}, 0)
 
 	qs := UnsafeString(c.Context().URI().QueryString())
 	if r, found := estateCache.Get(qs); found {
-		return JSONBlob(c, fiber.StatusOK, r.([]byte))
+		return JSONBlob(c, r.([]byte))
 	}
 
-	if c.Query("doorHeightRangeId") != "" {
-		doorHeight, err := getRange(estateSearchCondition.DoorHeight, c.Query("doorHeightRangeId"))
+	if q := c.Query("doorHeightRangeId"); q != "" {
+		doorHeight, err := getRange(estateSearchCondition.DoorHeight, q)
 		if err != nil {
-			log.Printf("doorHeightRangeID invalid, %v : %v", c.Query("doorHeightRangeId"), err)
+			log.Printf("doorHeightRangeID invalid, %v : %v", q, err)
 			return c.SendStatus(fiber.StatusBadRequest)
 		}
 		conditions = append(conditions, "door_height_range = ?")
 		params = append(params, doorHeight.ID)
+		conditionParams = append(conditionParams, q)
 	}
 
-	if c.Query("doorWidthRangeId") != "" {
-		doorWidth, err := getRange(estateSearchCondition.DoorWidth, c.Query("doorWidthRangeId"))
+	if q := c.Query("doorWidthRangeId"); q != "" {
+		doorWidth, err := getRange(estateSearchCondition.DoorWidth, q)
 		if err != nil {
-			log.Printf("doorWidthRangeID invalid, %v : %v", c.Query("doorWidthRangeId"), err)
+			log.Printf("doorWidthRangeID invalid, %v : %v", q, err)
 			return c.SendStatus(fiber.StatusBadRequest)
 		}
 		conditions = append(conditions, "door_width_range = ?")
 		params = append(params, doorWidth.ID)
+		conditionParams = append(conditionParams, q)
 	}
 
-	if c.Query("rentRangeId") != "" {
-		estateRent, err := getRange(estateSearchCondition.Rent, c.Query("rentRangeId"))
+	if q := c.Query("rentRangeId"); q != "" {
+		estateRent, err := getRange(estateSearchCondition.Rent, q)
 		if err != nil {
-			log.Printf("rentRangeID invalid, %v : %v", c.Query("rentRangeId"), err)
+			log.Printf("rentRangeID invalid, %v : %v", q, err)
 			return c.SendStatus(fiber.StatusBadRequest)
 		}
 		conditions = append(conditions, "rent_range = ?")
 		params = append(params, estateRent.ID)
+		conditionParams = append(conditionParams, q)
 	}
 
-	if c.Query("features") != "" {
-		for _, f := range strings.Split(c.Query("features"), ",") {
+	if q := c.Query("features"); q != "" {
+		for _, f := range strings.Split(q, ",") {
 			conditions = append(conditions, "features like concat('%', ?, '%')")
 			params = append(params, f)
 		}
+		conditionParams = append(conditionParams, q)
 	}
 
 	if len(conditions) == 0 {
@@ -968,8 +974,7 @@ func searchEstates(c *fiber.Ctx) error {
 	limitOffset := " ORDER BY popularity DESC, id ASC LIMIT ? OFFSET ?"
 	//fmt.Printf("%s\n", searchCondition)
 	var res types.EstateSearchResponse
-	ck, _ := json.Marshal(params)
-	countKey := searchCondition + UnsafeString(ck)
+	countKey := searchCondition + strings.Join(conditionParams, ",")
 	r, found := estateCache.Get(countKey)
 	if found {
 		//log.Printf("Hit %s", countKey)
@@ -1006,26 +1011,24 @@ func searchEstates(c *fiber.Ctx) error {
 		return c.SendStatus(fiber.StatusInternalServerError)
 	}
 
-	arr := estatePool.Get().(*[]types.Estate)
-	applyEstates(ids, arr)
-	defer estatePool.Put(arr)
-	res.Estates = *arr
+	res.IDs = ids
 
-	enc := json.NewEncoder(nil)
-	b, _ := enc.EncodeWithOptionRawBuf(res)
-	estateCache.SetWithClear(qs, b, func() {
-		enc.Release()
-	})
+	bb := BBPool.Get().(*BB)
+	bb.Write([]byte(`{"count":`))
+	bb.WriteString(strconv.FormatInt(res.Count, 10))
+	bb.Write([]byte(`,"estates":[`))
+	writeEstates(bb, res.IDs)
+	bb.Write([]byte(`]}`))
+	estateCache.SetWithClear(qs, bb.Bytes(), func() { bb.Reset(); BBPool.Put(bb) })
 
-	return JSONBlob(c, fiber.StatusOK, b)
+	return JSONBlob(c, bb.Bytes())
 }
 
 func getLowPricedEstate(c *fiber.Ctx) error {
 	if r, found := estateCache.Get("getLowPricedEstate"); found {
-		return JSONBlob(c, fiber.StatusOK, r.([]byte))
+		return JSONBlob(c, r.([]byte))
 	}
 	r, e, _ := sfGroup.Do("getLowPricedEstate", func() (interface{}, error) {
-
 		ids := make([]int64, 0, Limit)
 		query := `SELECT id FROM estate ORDER BY rent ASC, id ASC LIMIT ?`
 		err := db.Select(&ids, query, Limit)
@@ -1037,20 +1040,20 @@ func getLowPricedEstate(c *fiber.Ctx) error {
 			log.Printf("getLowPricedEstate DB execution error : %v", err)
 			return nil, err
 		}
-
-		arr := estatePool.Get().(*[]types.Estate)
-		applyEstates(ids, arr)
-		defer estatePool.Put(arr)
-		b, _ := json.Marshal(types.EstateListResponse{Estates: *arr})
-		estateCache.Set("getLowPricedEstate", b)
-
-		return b, nil
+		bb := BBPool.Get().(*BB)
+		bb.Write([]byte(`{"estates":[`))
+		writeEstates(bb, ids)
+		bb.Write([]byte(`]}`))
+		estateCache.SetWithClear("getLowPricedEstate", bb.Bytes(), func() { bb.Reset(); BBPool.Put(bb) })
+		return bb.Bytes(), nil
 	})
 	if e != nil {
 		return c.SendStatus(fiber.StatusInternalServerError)
 	}
-	return JSONBlob(c, fiber.StatusOK, r.([]byte))
+	return JSONBlob(c, r.([]byte))
 }
+
+var dimendReg = regexp.MustCompile(`"height":(\d+),"width":(\d+),"depth":(\d+)`)
 
 func searchRecommendedEstateWithChair(c *fiber.Ctx) error {
 	id, err := strconv.Atoi(c.Params("id"))
@@ -1060,18 +1063,30 @@ func searchRecommendedEstateWithChair(c *fiber.Ctx) error {
 	}
 
 	if r, found := estateCache.Get("recom" + c.Params("id")); found {
-		//log.Printf("recom hit")
-		return JSONBlob(c, fiber.StatusOK, r.([]byte))
+		return JSONBlob(c, r.([]byte))
 	}
 
-	chair, ok := chairObjCache.Get(int64(id))
-	if !ok {
-		return c.SendStatus(fiber.StatusBadRequest)
+	var w, h, d int64
+
+	if c, found := chairObjCache.Get(int64(id)); found {
+		p := dimendReg.FindSubmatch(c)
+		h, _ = strconv.ParseInt(UnsafeString(p[1]), 10, 64)
+		w, _ = strconv.ParseInt(UnsafeString(p[2]), 10, 64)
+		d, _ = strconv.ParseInt(UnsafeString(p[3]), 10, 64)
+		//log.Printf("%d %d %d", h, w, d)
+	}
+	if h == 0 && w == 0 && d == 0 {
+		var chair types.Chair
+		query := `SELECT * FROM chair WHERE id = ?`
+		err = db.Get(&chair, query, int64(id))
+		if err != nil {
+			return c.SendStatus(fiber.StatusBadRequest)
+		}
+		w = chair.Width
+		h = chair.Height
+		d = chair.Depth
 	}
 
-	w := chair.Width
-	h := chair.Height
-	d := chair.Depth
 	len := []int64{w, h, d}
 	sort.Slice(len, func(i, j int) bool {
 		return len[i] < len[j]
@@ -1090,17 +1105,14 @@ func searchRecommendedEstateWithChair(c *fiber.Ctx) error {
 		return c.SendStatus(fiber.StatusInternalServerError)
 	}
 
-	arr := estatePool.Get().(*[]types.Estate)
-	applyEstates(ids, arr)
-	defer estatePool.Put(arr)
+	bb := BBPool.Get().(*BB)
+	bb.Write([]byte(`{"estates":[`))
+	writeEstates(bb, ids)
+	bb.Write([]byte(`]}`))
 
-	enc := json.NewEncoder(nil)
-	b, _ := enc.EncodeWithOptionRawBuf(types.EstateListResponse{Estates: *arr})
-	estateCache.SetWithClear("recom"+c.Params("id"), b, func() {
-		enc.Release()
-	})
+	estateCache.SetWithClear("recom"+c.Params("id"), bb.Bytes(), func() { bb.Reset(); BBPool.Put(bb) })
 
-	return JSONBlob(c, fiber.StatusOK, b)
+	return JSONBlob(c, bb.Bytes())
 }
 
 func searchEstateNazotte(c *fiber.Ctx) error {
@@ -1120,18 +1132,13 @@ func searchEstateNazotte(c *fiber.Ctx) error {
 	ids := []int64{}
 	err = db.Select(&ids, query)
 
-	var re types.EstateSearchResponse
-	arr := estatePool.Get().(*[]types.Estate)
-	applyEstates(ids, arr)
-	defer estatePool.Put(arr)
-	re.Estates = *arr
-	re.Count = int64(len(ids))
-
-	enc := json.NewEncoder(c.Type("application/json").Status(fiber.StatusOK))
-	defer enc.Release()
-	return enc.Encode(re)
-	//b, _ := json.Marshal(re)
-	//return c.Type("application/json").Status(fiber.StatusOK).Send(b)
+	c.Set("Content-Type", "applicaiton/json")
+	c.Status(fiber.StatusOK).Write([]byte(`{"count":`))
+	c.WriteString(strconv.Itoa(len(ids)))
+	c.Write([]byte(`,"estates":[`))
+	writeEstates(c, ids)
+	c.Write([]byte(`]}`))
+	return nil
 }
 
 func postEstateRequestDocument(c *fiber.Ctx) error {
@@ -1172,7 +1179,7 @@ func postEstateRequestDocument(c *fiber.Ctx) error {
 }
 
 func getEstateSearchCondition(c *fiber.Ctx) error {
-	return JSONBlob(c, fiber.StatusOK, estateSearchConditionJSON)
+	return JSONBlob(c, estateSearchConditionJSON)
 }
 
 func splitRecords(records [][]string, n int) [][][]string {

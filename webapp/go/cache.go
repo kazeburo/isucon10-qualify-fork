@@ -12,6 +12,11 @@ type SCache struct {
 	mu sync.RWMutex
 }
 
+type BCache struct {
+	ma map[int64][]byte
+	mu sync.RWMutex
+}
+
 type EsCache struct {
 	ma map[int64]types.Estate
 	mu sync.RWMutex
@@ -55,7 +60,7 @@ func (c *SCache) Flush() {
 	for _, f := range c.cf {
 		f()
 	}
-	c.cf = []func(){}
+	c.cf = c.cf[:0]
 	c.ma = make(map[string]interface{})
 }
 
@@ -68,7 +73,43 @@ func (c *SCache) FlushWithNew(k string, v interface{}) {
 	for _, f := range c.cf {
 		f()
 	}
-	c.cf = []func(){}
+	c.cf = c.cf[:0]
+}
+
+func NewBC() *BCache {
+	ma := make(map[int64][]byte)
+	return &BCache{ma: ma}
+}
+
+func (c *BCache) Get(k int64) ([]byte, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	r, ok := c.ma[k]
+	return r, ok
+}
+
+func (c *BCache) GetMulti(ks []int64) ([][]byte, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	res := make([][]byte, 0, len(ks))
+	for _, k := range ks {
+		if r, ok := c.ma[k]; ok {
+			res = append(res, r)
+		}
+	}
+	return res, len(ks) == len(res)
+}
+
+func (c *BCache) Set(k int64, v []byte) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.ma[k] = v
+}
+
+func (c *BCache) Flush() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.ma = make(map[int64][]byte)
 }
 
 func NewCC() *ChCache {

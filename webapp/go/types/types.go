@@ -22,7 +22,7 @@ type Chair struct {
 	Features    string `db:"features" json:"features"`
 	Kind        string `db:"kind" json:"kind"`
 	Popularity  int64  `db:"popularity" json:"-"`
-	Stock       int64  `db:"stock" json:"-"`
+	Stock       int64  `db:"stock" json:"stock"`
 	PriceRange  int64  `db:"price_range" json:"-"`
 	HeightRange int64  `db:"height_range" json:"-"`
 	WidthRange  int64  `db:"width_range" json:"-"`
@@ -32,6 +32,7 @@ type Chair struct {
 type ChairSearchResponse struct {
 	Count  int64   `json:"count"`
 	Chairs []Chair `json:"chairs"`
+	IDs    []int64 `json:"-"`
 }
 
 type ChairListResponse struct {
@@ -62,6 +63,7 @@ type Estate struct {
 type EstateSearchResponse struct {
 	Count   int64    `json:"count"`
 	Estates []Estate `json:"estates"`
+	IDs     []int64  `json:"-"`
 }
 
 type EstateListResponse struct {

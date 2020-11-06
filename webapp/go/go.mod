@@ -10,11 +10,12 @@ require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/go-sql-driver/mysql v1.5.0
 	github.com/goccy/go-json v0.1.13
-	github.com/gofiber/fiber/v2 v2.1.2
+	github.com/gofiber/fiber/v2 v2.1.3
 	github.com/jmoiron/sqlx v1.2.0
 	github.com/klauspost/compress v1.11.2 // indirect
 	github.com/stretchr/testify v1.5.1 // indirect
 	github.com/valyala/bytebufferpool v1.0.0
+	github.com/valyala/fasthttp v1.17.0 // indirect
 	go.opencensus.io v0.22.5
 	golang.org/x/sync v0.0.0-20200625203802-6e8e738ad208
 	golang.org/x/sys v0.0.0-20201101102859-da207088b7d1 // indirect
