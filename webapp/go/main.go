@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -143,6 +142,10 @@ func UnsafeString(b []byte) string {
 	return *(*string)(unsafe.Pointer(&b))
 }
 
+func unsafeGetBytes(s string) []byte {
+	return *(*[]byte)(unsafe.Pointer(&s))
+}
+
 func NewMySQLConnectionEnv() *MySQLConnectionEnv {
 	return &MySQLConnectionEnv{
 		Host:     getEnv("MYSQL_HOST", "127.0.0.1"),
@@ -203,7 +206,6 @@ regexp.MustCompile(`Isupider(-image)?\+`),*/
 // Banbot middleware ban bot
 var botUAb = [][]byte{
 	[]byte("ISUCONbot"),
-	//	[]byte("ISUCONbot-Image/"),
 	[]byte("Mediapartners-ISUCON"),
 	[]byte("ISUCONCoffee"),
 	[]byte("ISUCONFeedSeeker"),
@@ -212,6 +214,7 @@ var botUAb = [][]byte{
 	[]byte("isubot"),
 	[]byte("Isupider"),
 }
+
 var spiderSpecialKey = []byte{
 	'-',
 	'_',
@@ -265,14 +268,14 @@ PARENT:
 
 func Banbot(c *fiber.Ctx) error {
 	ua := c.Request().Header.UserAgent()
-	if bytes.Contains(ua, []byte("ISUCON ")) {
+	if len(ua) >= 7 && bytes.Equal(ua[0:7], []byte("ISUCON ")) {
 		return c.Next()
 	}
-	uaLower := bytes.ToLower(ua)
 	if bytes.Equal(ua, []byte("/")) {
 		return c.SendStatus(fiber.StatusForbidden)
 	}
-	if uaLikeBot(ua) {
+	uaLower := bytes.ToLower(ua)
+	if bytes.Index(uaLower, []byte("isu")) > 0 && uaLikeBot(ua) {
 		return c.SendStatus(fiber.StatusForbidden)
 	}
 	if uaLikeSpider(uaLower, []byte("bot")) ||
@@ -687,17 +690,27 @@ func searchChairs(c *fiber.Ctx) error {
 	return JSONBlob(c, bb.Bytes())
 }
 
-var stockDecrReg = regexp.MustCompile(`"stock":(\d+)`)
+var stockSep = []byte(`"stock":`)
+var stockSepLen = len(stockSep)
 
-func unsafeGetBytes(s string) []byte {
-	return *(*[]byte)(unsafe.Pointer(&s))
-}
-
-func stockDecr(b []byte) []byte {
-	parts := stockDecrReg.FindStringSubmatch(UnsafeString(b))
-	i, _ := strconv.Atoi(parts[1])
-	i = i - 1
-	return []byte(`"stock":` + strconv.Itoa(i))
+func stockDecrement(s []byte) []byte {
+	dst := make([]byte, 0, len(s))
+	p := bytes.Index(s, stockSep)
+	if p <= 0 {
+		dst = append(dst, s...)
+		return dst
+	}
+	dst = append(dst, s[:p+stockSepLen]...)
+	q := 0
+	for '9' >= s[p+stockSepLen+q+1] && s[p+stockSepLen+q+1] >= '0' {
+		q++
+	}
+	var stock int64
+	stock, _ = strconv.ParseInt(UnsafeString(s[p+stockSepLen:p+stockSepLen+q+1]), 10, 64)
+	stock = stock - 1
+	dst = strconv.AppendInt(dst, stock, 10)
+	dst = append(dst, s[p+stockSepLen+q+1:]...)
+	return dst
 }
 
 func buyChair(c *fiber.Ctx) error {
@@ -736,7 +749,7 @@ func buyChair(c *fiber.Ctx) error {
 
 	id64 := int64(id)
 	if e, ok := chairObjCache.Get(id64); ok {
-		e = stockDecrReg.ReplaceAllFunc(e, stockDecr)
+		e = stockDecrement(e)
 		chairObjCache.Set(id64, e)
 	}
 	sfGroup.Do("chairCache.Flush", func() (interface{}, error) {
@@ -1053,7 +1066,20 @@ func getLowPricedEstate(c *fiber.Ctx) error {
 	return JSONBlob(c, r.([]byte))
 }
 
-var dimendReg = regexp.MustCompile(`"height":(\d+),"width":(\d+),"depth":(\d+)`)
+func getDimension(c []byte, t []byte, start int) (int64, int) {
+	tlen := len(t)
+	p := bytes.Index(c[start:], t)
+	q := 0
+	d := int64(0)
+	if p > 0 {
+		q = 0
+		for '9' >= c[start+p+tlen+q+1] && c[start+p+tlen+q+1] >= '0' {
+			q++
+		}
+		d, _ = strconv.ParseInt(UnsafeString(c[start+p+tlen:start+p+tlen+q+1]), 10, 64)
+	}
+	return d, p + start + tlen + q + 1
+}
 
 func searchRecommendedEstateWithChair(c *fiber.Ctx) error {
 	id, err := strconv.Atoi(c.Params("id"))
@@ -1069,11 +1095,10 @@ func searchRecommendedEstateWithChair(c *fiber.Ctx) error {
 	var w, h, d int64
 
 	if c, found := chairObjCache.Get(int64(id)); found {
-		p := dimendReg.FindSubmatch(c)
-		h, _ = strconv.ParseInt(UnsafeString(p[1]), 10, 64)
-		w, _ = strconv.ParseInt(UnsafeString(p[2]), 10, 64)
-		d, _ = strconv.ParseInt(UnsafeString(p[3]), 10, 64)
-		//log.Printf("%d %d %d", h, w, d)
+		pos := 0
+		h, pos = getDimension(c, []byte(`"height":`), pos)
+		w, pos = getDimension(c, []byte(`"width":`), pos)
+		d, pos = getDimension(c, []byte(`"depth":`), pos)
 	}
 	if h == 0 && w == 0 && d == 0 {
 		var chair types.Chair
