@@ -1156,7 +1156,7 @@ func searchRecommendedEstateWithChair(c *fiber.Ctx) error {
 	minLen := len[0]
 	midLen := len[1]
 
-	query := `SELECT id FROM estate FORCE INDEX(idx_pop) WHERE (door_width >= ? AND door_height >= ?) OR (door_width >= ? AND door_height >= ?) ORDER BY popularity DESC, id ASC LIMIT ?`
+	query := `SELECT id FROM estate_search WHERE (door_width >= ? AND door_height >= ?) OR (door_width >= ? AND door_height >= ?) ORDER BY popularity DESC, id ASC LIMIT ?`
 	ids := make([]int64, 0, Limit)
 	err = db.Select(&ids, query, minLen, midLen, midLen, minLen, Limit)
 	if err != nil {
@@ -1191,7 +1191,7 @@ func searchEstateNazotte(c *fiber.Ctx) error {
 
 	po := coordinates.CoordinatesToText()
 	ids := []int64{}
-	err = db.Select(&ids, "SELECT id FROM estate FORCE INDEX(idx_point) WHERE ST_Contains(ST_PolygonFromText('POLYGON(("+po+"))'), point) ORDER BY popularity DESC, id ASC LIMIT 50")
+	err = db.Select(&ids, "SELECT id FROM estate_search FORCE INDEX(idx_point) WHERE ST_Contains(ST_PolygonFromText('POLYGON(("+po+"))'), point) ORDER BY popularity DESC, id ASC LIMIT 50")
 
 	c.Set("Content-Type", "applicaiton/json")
 	c.Status(fiber.StatusOK).Write([]byte(`{"count":`))
