@@ -14,7 +14,7 @@ import (
 	"go.opencensus.io/trace"
 )
 
-var use_profiler = false
+var use_profiler = true
 
 func initProfiler() {
 	if !use_profiler {

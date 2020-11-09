@@ -166,8 +166,8 @@ func getEnv(key, defaultValue string) string {
 
 //ConnectDB isuumoデータベースに接続する
 func (mc *MySQLConnectionEnv) ConnectDB() (*sqlx.DB, error) {
-	// dsn := fmt.Sprintf("%v:%v@tcp(%v:%v)/%v?interpolateParams=true", mc.User, mc.Password, mc.Host, mc.Port, mc.DBName)
-	dsn := fmt.Sprintf("%v:%v@unix(/tmp/mysql.sock)/%v?interpolateParams=true", mc.User, mc.Password, mc.DBName)
+	dsn := fmt.Sprintf("%v:%v@tcp(%v:%v)/%v?interpolateParams=true", mc.User, mc.Password, mc.Host, mc.Port, mc.DBName)
+	// dsn := fmt.Sprintf("%v:%v@unix(/tmp/mysql.sock)/%v?interpolateParams=true", mc.User, mc.Password, mc.DBName)
 	return sqlx.Open("mysql", dsn)
 }
 
@@ -545,6 +545,27 @@ func JSONBlob(c *fiber.Ctx, body []byte) error {
 	return c.Status(fiber.StatusOK).Send(body)
 }
 
+var kindMap = map[string]int{
+	"ゲーミングチェア": 0,
+	"座椅子":      1,
+	"エルゴノミクス":  2,
+	"ハンモック":    3,
+}
+var colorMap = map[string]int{
+	"黒":    0,
+	"白":    1,
+	"赤":    2,
+	"青":    3,
+	"緑":    4,
+	"黄":    5,
+	"紫":    6,
+	"ピンク":  7,
+	"オレンジ": 8,
+	"水色":   9,
+	"ネイビー": 10,
+	"ベージュ": 11,
+}
+
 func searchChairs(c *fiber.Ctx) error {
 	conditions := make([]string, 0, 8)
 	conditionParams := make([]string, 0, 8)
@@ -600,15 +621,27 @@ func searchChairs(c *fiber.Ctx) error {
 	}
 
 	if q := c.Query("kind"); q != "" {
-		conditions = append(conditions, "kind = ?")
-		params = append(params, q)
-		conditionParams = append(conditionParams, q)
+		if kindRange, ok := kindMap[q]; ok {
+			conditions = append(conditions, "kind_range = ?")
+			params = append(params, kindRange)
+			conditionParams = append(conditionParams, q)
+		} else {
+			conditions = append(conditions, "kind = ?")
+			params = append(params, q)
+			conditionParams = append(conditionParams, q)
+		}
 	}
 
 	if q := c.Query("color"); q != "" {
-		conditions = append(conditions, "color = ?")
-		params = append(params, q)
-		conditionParams = append(conditionParams, q)
+		if colorRange, ok := colorMap[q]; ok {
+			conditions = append(conditions, "color_range = ?")
+			params = append(params, colorRange)
+			conditionParams = append(conditionParams, q)
+		} else {
+			conditions = append(conditions, "color = ?")
+			params = append(params, q)
+			conditionParams = append(conditionParams, q)
+		}
 	}
 
 	if q := c.Query("features"); q != "" {
@@ -693,12 +726,12 @@ func searchChairs(c *fiber.Ctx) error {
 var stockSep = []byte(`"stock":`)
 var stockSepLen = len(stockSep)
 
-func stockDecrement(s []byte) []byte {
+func stockDecrement(s []byte) ([]byte, int64) {
 	dst := make([]byte, 0, len(s))
 	p := bytes.Index(s, stockSep)
 	if p <= 0 {
 		dst = append(dst, s...)
-		return dst
+		return dst, -1
 	}
 	dst = append(dst, s[:p+stockSepLen]...)
 	q := 0
@@ -710,7 +743,7 @@ func stockDecrement(s []byte) []byte {
 	stock = stock - 1
 	dst = strconv.AppendInt(dst, stock, 10)
 	dst = append(dst, s[p+stockSepLen+q+1:]...)
-	return dst
+	return dst, stock
 }
 
 func buyChair(c *fiber.Ctx) error {
@@ -748,14 +781,18 @@ func buyChair(c *fiber.Ctx) error {
 	}
 
 	id64 := int64(id)
+	var stock int64 = -1
 	if e, ok := chairObjCache.Get(id64); ok {
-		e = stockDecrement(e)
+		e, stock = stockDecrement(e)
 		chairObjCache.Set(id64, e)
 	}
-	sfGroup.Do("chairCache.Flush", func() (interface{}, error) {
-		chairCache.Flush()
-		return nil, nil
-	})
+
+	if stock == 0 {
+		sfGroup.Do("chairCache.Flush", func() (interface{}, error) {
+			chairCache.Flush()
+			return nil, nil
+		})
+	}
 
 	return c.SendStatus(fiber.StatusOK)
 }
@@ -914,9 +951,9 @@ func postEstate(c *fiber.Ctx) error {
 }
 
 func searchEstates(c *fiber.Ctx) error {
-	conditions := make([]string, 0)
-	conditionParams := make([]string, 0)
-	params := make([]interface{}, 0)
+	conditions := make([]string, 0, 8)
+	conditionParams := make([]string, 0, 8)
+	params := make([]interface{}, 0, 8)
 
 	qs := UnsafeString(c.Context().URI().QueryString())
 	if r, found := estateCache.Get(qs); found {
@@ -1000,7 +1037,7 @@ func searchEstates(c *fiber.Ctx) error {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			cntErr = db.Get(&res.Count, countQuery+searchCondition, params...)
+			cntErr := db.Get(&res.Count, countQuery+searchCondition, params...)
 			if cntErr == nil {
 				estateCache.Set(countKey, res.Count)
 			}
@@ -1153,9 +1190,8 @@ func searchEstateNazotte(c *fiber.Ctx) error {
 	}
 
 	po := coordinates.CoordinatesToText()
-	query := fmt.Sprintf("SELECT id FROM estate FORCE INDEX(idx_point) WHERE ST_Contains(ST_PolygonFromText('POLYGON((%s))'), point) ORDER BY popularity DESC, id ASC LIMIT 50", po)
 	ids := []int64{}
-	err = db.Select(&ids, query)
+	err = db.Select(&ids, "SELECT id FROM estate FORCE INDEX(idx_point) WHERE ST_Contains(ST_PolygonFromText('POLYGON(("+po+"))'), point) ORDER BY popularity DESC, id ASC LIMIT 50")
 
 	c.Set("Content-Type", "applicaiton/json")
 	c.Status(fiber.StatusOK).Write([]byte(`{"count":`))

@@ -27,6 +27,8 @@ type Chair struct {
 	HeightRange int64  `db:"height_range" json:"-"`
 	WidthRange  int64  `db:"width_range" json:"-"`
 	DepthRange  int64  `db:"depth_range" json:"-"`
+	KindRange   int64  `db:"kind_range" json:"-"`
+	ColorRange  int64  `db:"color_range" json:"-"`
 }
 
 type ChairSearchResponse struct {
