@@ -34,8 +34,8 @@ CREATE TABLE isuumo.estate_search
 (
     id          INTEGER             NOT NULL PRIMARY KEY,
     point       POINT  SRID 0 NOT NULL,
-    door_height INTEGER             NOT NULL,
-    door_width  INTEGER             NOT NULL,
+    door_long   INTEGER             NOT NULL,
+    door_short  INTEGER             NOT NULL,
     popularity  INTEGER             NOT NULL
 ) ROW_FORMAT=DYNAMIC;
 
@@ -98,14 +98,14 @@ CREATE
     INSERT INTO isuumo.estate_search(
         id,
         point,
-        door_height,
-        door_width,
+        door_long,
+        door_short,
         popularity
     ) VALUES (
         NEW.id,
         POINT(NEW.latitude, NEW.longitude),
-        NEW.door_height,
-        NEW.door_width,
+        GREATEST(NEW.door_height,NEW.door_width),
+        LEAST(NEW.door_height,NEW.door_width),
         NEW.popularity
     );
     END $$

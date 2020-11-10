@@ -1156,9 +1156,9 @@ func searchRecommendedEstateWithChair(c *fiber.Ctx) error {
 	minLen := len[0]
 	midLen := len[1]
 
-	query := `SELECT id FROM estate_search WHERE (door_width >= ? AND door_height >= ?) OR (door_width >= ? AND door_height >= ?) ORDER BY popularity DESC, id ASC LIMIT ?`
+	query := `SELECT id FROM estate_search WHERE door_long >= ? AND door_short >= ? ORDER BY popularity DESC, id ASC LIMIT ?`
 	ids := make([]int64, 0, Limit)
-	err = db.Select(&ids, query, minLen, midLen, midLen, minLen, Limit)
+	err = db.Select(&ids, query, midLen, minLen, Limit)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return json.NewEncoder(c.Type("application/json").Status(fiber.StatusOK)).Encode(types.EstateListResponse{[]types.Estate{}})
