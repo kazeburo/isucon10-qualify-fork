@@ -11,7 +11,7 @@ require (
 	github.com/go-sql-driver/mysql v1.5.0
 	github.com/goccy/go-json v0.1.13
 	github.com/gofiber/fiber/v2 v2.1.3
-	github.com/jmoiron/sqlx v1.2.0
+	github.com/jmoiron/sqlx v1.2.1-0.20200615141059-0794cb1f47ee
 	github.com/klauspost/compress v1.11.2 // indirect
 	github.com/stretchr/testify v1.5.1 // indirect
 	github.com/valyala/bytebufferpool v1.0.0

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/csv"
 	"fmt"
@@ -670,33 +671,25 @@ func searchChairs(c *fiber.Ctx) error {
 	}
 
 	searchQuery := "SELECT id FROM chair_stock WHERE "
-	countQuery := "SELECT COUNT(*) FROM chair_stock WHERE "
+	//countQuery := "SELECT COUNT(*) FROM chair_stock WHERE "
 	searchCondition := strings.Join(conditions, " AND ")
 	limitOffset := " ORDER BY popularity DESC, id ASC LIMIT ? OFFSET ?"
 	//log.Printf("searchCondition: %s", searchCondition)
 	var res types.ChairSearchResponse
 	countKey := searchCondition + strings.Join(conditionParams, ",")
-	r, found := chairCache.Get(countKey)
-	if found {
-		//log.Printf("Hit %s", countKey)
+	r, foundCount := chairCache.Get(countKey)
+	if foundCount {
 		res.Count = r.(int64)
-	}
-	var cntErr error
-	var wg sync.WaitGroup
-	if !found {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			cntErr = db.Get(&res.Count, countQuery+searchCondition, params...)
-			if cntErr == nil {
-				chairCache.Set(countKey, res.Count)
-			}
-		}()
+	} else {
+		searchQuery = "SELECT SQL_CALC_FOUND_ROWS id FROM chair_stock WHERE "
 	}
 
+	ctx := context.Background()
 	ids := make([]int64, 0, perPage)
 	paramsQ := append(params, perPage, page*perPage)
-	err = db.Select(&ids, searchQuery+searchCondition+limitOffset, paramsQ...)
+	dbc, _ := db.Connx(ctx)
+	defer dbc.Close()
+	err = dbc.SelectContext(ctx, &ids, searchQuery+searchCondition+limitOffset, paramsQ...)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return json.NewEncoder(c.Type("application/json").Status(fiber.StatusOK)).Encode(types.ChairSearchResponse{Count: 0, Chairs: []types.Chair{}})
@@ -704,13 +697,16 @@ func searchChairs(c *fiber.Ctx) error {
 		log.Printf("searchChairs DB execution error : %v", err)
 		return c.SendStatus(fiber.StatusInternalServerError)
 	}
-
-	wg.Wait()
-	if cntErr != nil {
-		log.Printf("searchChairs DB execution error : %v", cntErr)
-		return c.SendStatus(fiber.StatusInternalServerError)
-	}
 	res.IDs = ids
+
+	if !foundCount {
+		err = dbc.GetContext(ctx, &res.Count, "SELECT FOUND_ROWS()")
+		if err != nil {
+			log.Printf("searchChairs DB execution error : %v", err)
+			return c.SendStatus(fiber.StatusInternalServerError)
+		}
+		chairCache.Set(countKey, res.Count)
+	}
 
 	bb := BBPool.Get().(*BB)
 	bb.Write([]byte(`{"count":`))
@@ -1019,34 +1015,25 @@ func searchEstates(c *fiber.Ctx) error {
 	}
 
 	searchQuery := "SELECT id FROM estate WHERE "
-	countQuery := "SELECT COUNT(*) FROM estate WHERE "
+	//countQuery := "SELECT COUNT(*) FROM estate WHERE "
 	searchCondition := strings.Join(conditions, " AND ")
 	limitOffset := " ORDER BY popularity DESC, id ASC LIMIT ? OFFSET ?"
 	//fmt.Printf("%s\n", searchCondition)
 	var res types.EstateSearchResponse
 	countKey := searchCondition + strings.Join(conditionParams, ",")
-	r, found := estateCache.Get(countKey)
-	if found {
-		//log.Printf("Hit %s", countKey)
+	r, foundCount := estateCache.Get(countKey)
+	if foundCount {
 		res.Count = r.(int64)
-	}
-
-	var cntErr error
-	var wg sync.WaitGroup
-	if !found {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			cntErr := db.Get(&res.Count, countQuery+searchCondition, params...)
-			if cntErr == nil {
-				estateCache.Set(countKey, res.Count)
-			}
-		}()
+	} else {
+		searchQuery = "SELECT SQL_CALC_FOUND_ROWS id FROM estate WHERE "
 	}
 
 	ids := make([]int64, 0, perPage)
 	paramsQ := append(params, perPage, page*perPage)
-	err = db.Select(&ids, searchQuery+searchCondition+limitOffset, paramsQ...)
+	ctx := context.Background()
+	dbc, _ := db.Connx(ctx)
+	defer dbc.Close()
+	err = dbc.SelectContext(ctx, &ids, searchQuery+searchCondition+limitOffset, paramsQ...)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return c.JSON(types.EstateSearchResponse{Count: 0, Estates: []types.Estate{}})
@@ -1054,14 +1041,16 @@ func searchEstates(c *fiber.Ctx) error {
 		log.Printf("searchEstates DB execution error : %v", err)
 		return c.SendStatus(fiber.StatusInternalServerError)
 	}
-
-	wg.Wait()
-	if cntErr != nil {
-		log.Printf("searchEstates DB execution error : %v", cntErr)
-		return c.SendStatus(fiber.StatusInternalServerError)
-	}
-
 	res.IDs = ids
+
+	if !foundCount {
+		err = dbc.GetContext(ctx, &res.Count, "SELECT FOUND_ROWS()")
+		if err != nil {
+			log.Printf("searchEstates DB execution error : %v", err)
+			return c.SendStatus(fiber.StatusInternalServerError)
+		}
+		chairCache.Set(countKey, res.Count)
+	}
 
 	bb := BBPool.Get().(*BB)
 	bb.Write([]byte(`{"count":`))
