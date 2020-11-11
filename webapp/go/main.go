@@ -247,7 +247,7 @@ PARENT:
 		if dlen == p1 {
 			break
 		}
-		p2 := bytes.Index(d[p1:], s)
+		p2 := indexLower(d[p1:], s)
 		if p2 < 0 {
 			break
 		}
@@ -267,6 +267,32 @@ PARENT:
 	return found
 }
 
+var toLowerDiff byte = 'a' - 'A'
+
+func toLower(s byte) byte {
+	if 'A' <= s && s <= 'Z' {
+		return s + toLowerDiff
+	}
+	return s
+}
+
+func indexLower(s, sep []byte) int {
+	slen := len(s)
+	seplen := len(sep)
+PARENT:
+	for i := 0; i <= slen-seplen; i++ {
+		if toLower(s[i]) == sep[0] {
+			for k := 1; k < seplen; k++ {
+				if toLower(s[i+k]) != sep[k] {
+					continue PARENT
+				}
+			}
+			return i + 1
+		}
+	}
+	return -1
+}
+
 func Banbot(c *fiber.Ctx) error {
 	ua := c.Request().Header.UserAgent()
 	if len(ua) >= 7 && bytes.Equal(ua[0:7], []byte("ISUCON ")) {
@@ -275,13 +301,12 @@ func Banbot(c *fiber.Ctx) error {
 	if bytes.Equal(ua, []byte("/")) {
 		return c.SendStatus(fiber.StatusForbidden)
 	}
-	uaLower := bytes.ToLower(ua)
-	if bytes.Index(uaLower, []byte("isu")) > 0 && uaLikeBot(ua) {
+	if indexLower(ua, []byte("isu")) > 0 && uaLikeBot(ua) {
 		return c.SendStatus(fiber.StatusForbidden)
 	}
-	if uaLikeSpider(uaLower, []byte("bot")) ||
-		uaLikeSpider(uaLower, []byte("crawler")) ||
-		uaLikeSpider(uaLower, []byte("spider")) {
+	if uaLikeSpider(ua, []byte("bot")) ||
+		uaLikeSpider(ua, []byte("crawler")) ||
+		uaLikeSpider(ua, []byte("spider")) {
 		return c.SendStatus(fiber.StatusForbidden)
 	}
 	return c.Next()
@@ -714,7 +739,6 @@ func searchChairs(c *fiber.Ctx) error {
 	bb.Write([]byte(`,"chairs":[`))
 	writeChairs(bb, res.IDs)
 	bb.Write([]byte(`]}`))
-
 	chairCache.SetWithClear(qs, bb.Bytes(), func() { bb.Reset(); BBPool.Put(bb) })
 	return JSONBlob(c, bb.Bytes())
 }
@@ -1049,7 +1073,7 @@ func searchEstates(c *fiber.Ctx) error {
 			log.Printf("searchEstates DB execution error : %v", err)
 			return c.SendStatus(fiber.StatusInternalServerError)
 		}
-		chairCache.Set(countKey, res.Count)
+		estateCache.Set(countKey, res.Count)
 	}
 
 	bb := BBPool.Get().(*BB)
@@ -1114,10 +1138,6 @@ func searchRecommendedEstateWithChair(c *fiber.Ctx) error {
 		return c.SendStatus(fiber.StatusBadRequest)
 	}
 
-	if r, found := estateCache.Get("recom" + c.Params("id")); found {
-		return JSONBlob(c, r.([]byte))
-	}
-
 	var w, h, d int64
 
 	if c, found := chairObjCache.Get(int64(id)); found {
@@ -1144,6 +1164,11 @@ func searchRecommendedEstateWithChair(c *fiber.Ctx) error {
 	})
 	minLen := len[0]
 	midLen := len[1]
+	cacheKey := "recom" + strconv.FormatInt(minLen, 10) + "_" + strconv.FormatInt(midLen, 10)
+
+	if r, found := estateCache.Get(cacheKey); found {
+		return JSONBlob(c, r.([]byte))
+	}
 
 	query := `SELECT id FROM estate_search WHERE door_long >= ? AND door_short >= ? ORDER BY popularity DESC, id ASC LIMIT ?`
 	ids := make([]int64, 0, Limit)
@@ -1161,7 +1186,7 @@ func searchRecommendedEstateWithChair(c *fiber.Ctx) error {
 	writeEstates(bb, ids)
 	bb.Write([]byte(`]}`))
 
-	estateCache.SetWithClear("recom"+c.Params("id"), bb.Bytes(), func() { bb.Reset(); BBPool.Put(bb) })
+	estateCache.SetWithClear(cacheKey, bb.Bytes(), func() { bb.Reset(); BBPool.Put(bb) })
 
 	return JSONBlob(c, bb.Bytes())
 }
