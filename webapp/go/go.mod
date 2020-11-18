@@ -10,15 +10,15 @@ require (
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/go-sql-driver/mysql v1.5.0
 	github.com/goccy/go-json v0.1.13
-	github.com/gofiber/fiber/v2 v2.1.3
+	github.com/gofiber/fiber/v2 v2.2.0
 	github.com/jmoiron/sqlx v1.2.1-0.20200615141059-0794cb1f47ee
-	github.com/klauspost/compress v1.11.2 // indirect
+	github.com/klauspost/compress v1.11.3 // indirect
 	github.com/stretchr/testify v1.5.1 // indirect
 	github.com/valyala/bytebufferpool v1.0.0
 	github.com/valyala/fasthttp v1.17.0 // indirect
 	go.opencensus.io v0.22.5
 	golang.org/x/sync v0.0.0-20200625203802-6e8e738ad208
-	golang.org/x/sys v0.0.0-20201101102859-da207088b7d1 // indirect
+	golang.org/x/sys v0.0.0-20201117222635-ba5294a509c7 // indirect
 	gopkg.in/yaml.v2 v2.3.0 // indirect
 )
 
