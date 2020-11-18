@@ -252,7 +252,7 @@ PARENT:
 			break
 		}
 		p3 := p1 + p2 + slen
-		if p3 == dlen {
+		if p3 > dlen {
 			found = true
 			break
 		}
